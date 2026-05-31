@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, X, Pin, ClipboardList, Cloud, RefreshCw } from 'lucide-react';
 import clsx from 'clsx';
+import { sbGetAppSetting, sbSetAppSetting } from '../../lib/supabaseClient';
 
 interface Note {
   id: string;
@@ -18,24 +19,22 @@ const DEFAULT_NOTES: Note[] = [
   },
 ];
 
+const NOTES_KEY = 'sticky_notes'
+
 async function apiGetNotes(): Promise<Note[]> {
   try {
-    const res = await fetch('/api/settings/notes');
-    if (!res.ok) return [];
-    const data = await res.json();
-    return Array.isArray(data) ? data : [];
+    const raw = await sbGetAppSetting(NOTES_KEY)
+    if (!raw) return []
+    const data = JSON.parse(raw)
+    return Array.isArray(data) ? data : []
   } catch {
-    return [];
+    return []
   }
 }
 
 async function apiSaveNotes(notes: Note[]): Promise<void> {
   try {
-    await fetch('/api/settings/notes', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(notes),
-    });
+    await sbSetAppSetting(NOTES_KEY, JSON.stringify(notes))
   } catch {
     // silent fail
   }

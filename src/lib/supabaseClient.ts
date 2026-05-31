@@ -423,7 +423,7 @@ export async function sbDeleteMethod(id: number): Promise<void> {
 // ── 앱 설정 (스티커 메모 등) ──────────────────────────────────────────────────
 
 export async function sbGetAppSetting(key: string): Promise<string | null> {
-  const { data } = await supabase.from('app_settings').select('value').eq('key', key).single()
+  const { data } = await supabase.from('app_settings').select('value').eq('key', key).maybeSingle()
   return data?.value ?? null
 }
 

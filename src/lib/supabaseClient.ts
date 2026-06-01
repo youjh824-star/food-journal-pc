@@ -786,11 +786,28 @@ function buildStatsFromLogs(
   return { daily, weekly, monthly, test_item_equipment, by_equipment: toArr(equipMap), by_test_item: toArr(testItemMap), by_project: toArr(projectMap) }
 }
 
+async function loadTIEMap(): Promise<Record<string, string>> {
+  try {
+    const { data } = await supabase.from('app_settings').select('value').eq('key', 'test_item_equipment_map').maybeSingle()
+    return data?.value ? JSON.parse(data.value) : {}
+  } catch { return {} }
+}
+
+function applyTIEMap(
+  logs: { log_date: string; sample_count: number; workload: number; test_item?: string; equipment_name?: string }[],
+  tieMap: Record<string, string>,
+) {
+  return logs.map(r => ({
+    ...r,
+    equipment_name: r.equipment_name?.trim() || (r.test_item ? (tieMap[r.test_item] ?? null) : null) || undefined,
+  }))
+}
+
 export async function sbGetStatistics(params?: Record<string, string>): Promise<Statistics> {
   const days = parseInt(params?.days ?? '30')
   const startDate = daysAgo(days)
 
-  const [wlRes, sRes] = await Promise.all([
+  const [wlRes, sRes, tieMap] = await Promise.all([
     supabase.from('work_logs')
       .select('log_date, sample_count, workload, test_item, equipment_name')
       .gte('log_date', startDate)
@@ -798,10 +815,16 @@ export async function sbGetStatistics(params?: Record<string, string>): Promise<
     supabase.from('samples')
       .select('analysis_date, test_item, project_name')
       .gte('analysis_date', startDate),
+    loadTIEMap(),
   ])
 
-  return buildStatsFromLogs(
+  const logs = applyTIEMap(
     (wlRes.data ?? []) as { log_date: string; sample_count: number; workload: number; test_item?: string; equipment_name?: string }[],
+    tieMap,
+  )
+
+  return buildStatsFromLogs(
+    logs,
     (sRes.data ?? []) as { analysis_date?: string; test_item?: string; project_name?: string }[],
     days,
   )
@@ -810,7 +833,7 @@ export async function sbGetStatistics(params?: Record<string, string>): Promise<
 // ── 보고서 데이터 ─────────────────────────────────────────────────────────────
 
 export async function sbGetReportData(startDate: string, endDate: string): Promise<import('../api/types').ReportData> {
-  const [wlRes, sRes] = await Promise.all([
+  const [wlRes, sRes, tieMap] = await Promise.all([
     supabase.from('work_logs')
       .select('log_date, sample_count, workload, test_item, equipment_name')
       .gte('log_date', startDate).lte('log_date', endDate)
@@ -818,9 +841,13 @@ export async function sbGetReportData(startDate: string, endDate: string): Promi
     supabase.from('samples')
       .select('analysis_date, test_item, project_name')
       .gte('analysis_date', startDate).lte('analysis_date', endDate),
+    loadTIEMap(),
   ])
 
-  const logs = (wlRes.data ?? []) as { log_date: string; sample_count: number; workload: number; test_item?: string; equipment_name?: string }[]
+  const logs = applyTIEMap(
+    (wlRes.data ?? []) as { log_date: string; sample_count: number; workload: number; test_item?: string; equipment_name?: string }[],
+    tieMap,
+  )
   const samples = (sRes.data ?? []) as { analysis_date?: string; test_item?: string; project_name?: string }[]
   const days = Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000) + 1
 

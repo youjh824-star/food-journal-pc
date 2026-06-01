@@ -1,22 +1,138 @@
 import { useEffect, useState } from 'react';
-import { api, AppSettings } from '../api/client';
-import { sbSetAppSetting } from '../lib/supabaseClient';
+import { api, AppSettings, Equipment } from '../api/client';
+import { sbSetAppSetting, sbGetAppSetting } from '../lib/supabaseClient';
 import { PageHeader } from '../components/UI';
-import { Save, Cloud, CheckCircle } from 'lucide-react';
+import { Save, Cloud, CheckCircle, Plus, Trash2 } from 'lucide-react';
+
+// ── 시험항목-장비 매핑 ────────────────────────────────────────────────────────
+
+const SETTINGS_KEY = 'test_item_equipment_map';
+
+type TIEMap = Record<string, string>; // test_item → equipment_name
+
+async function loadTIEMap(): Promise<TIEMap> {
+  try {
+    const raw = await sbGetAppSetting(SETTINGS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+
+async function saveTIEMap(map: TIEMap): Promise<void> {
+  await sbSetAppSetting(SETTINGS_KEY, JSON.stringify(map));
+}
+
+export async function getTIEMap(): Promise<TIEMap> {
+  return loadTIEMap();
+}
+
+function TIEMapEditor({ equipment }: { equipment: Equipment[] }) {
+  const [map, setMap] = useState<TIEMap>({});
+  const [newItem, setNewItem] = useState('');
+  const [newEq, setNewEq] = useState('');
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => { loadTIEMap().then(setMap); }, []);
+
+  const save = async () => {
+    await saveTIEMap(map);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  const addRow = () => {
+    const ti = newItem.trim();
+    const eq = newEq.trim();
+    if (!ti || !eq) return;
+    setMap(prev => ({ ...prev, [ti]: eq }));
+    setNewItem('');
+    setNewEq('');
+  };
+
+  const removeRow = (ti: string) => {
+    setMap(prev => { const next = { ...prev }; delete next[ti]; return next; });
+  };
+
+  const eqNames = equipment.map(e => e.name);
+
+  return (
+    <div className="card space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="font-medium text-white">시험항목 → 장비 기본 매핑</h3>
+        <p className="text-xs text-slate-lab">업로드 시 장비 미선택인 경우 자동 적용</p>
+      </div>
+
+      <div className="space-y-2">
+        {Object.entries(map).map(([ti, eq]) => (
+          <div key={ti} className="flex items-center gap-2">
+            <span className="flex-1 text-sm text-white bg-navy-900/60 rounded px-3 py-1.5">{ti}</span>
+            <span className="text-slate-lab text-xs">→</span>
+            <select
+              className="input-field flex-1 text-sm"
+              value={eq}
+              onChange={e => setMap(prev => ({ ...prev, [ti]: e.target.value }))}
+            >
+              {eqNames.map(n => <option key={n} value={n}>{n}</option>)}
+              {!eqNames.includes(eq) && <option value={eq}>{eq}</option>}
+            </select>
+            <button onClick={() => removeRow(ti)} className="text-red-400 hover:text-red-300 p-1">
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {/* 새 행 추가 */}
+      <div className="flex items-center gap-2 pt-1 border-t border-navy-700">
+        <input
+          className="input-field flex-1 text-sm"
+          placeholder="시험항목 (예: 비소(As))"
+          value={newItem}
+          onChange={e => setNewItem(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') addRow(); }}
+        />
+        <span className="text-slate-lab text-xs">→</span>
+        <select
+          className="input-field flex-1 text-sm"
+          value={newEq}
+          onChange={e => setNewEq(e.target.value)}
+        >
+          <option value="">장비 선택</option>
+          {eqNames.map(n => <option key={n} value={n}>{n}</option>)}
+        </select>
+        <button onClick={addRow} className="text-accent hover:text-accent-light p-1" title="추가">
+          <Plus className="w-4 h-4" />
+        </button>
+      </div>
+
+      <button onClick={save} className="btn-primary flex items-center gap-2 text-sm">
+        <Save className="w-4 h-4" />
+        {saved ? <span className="flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" /> 저장됨!</span> : '매핑 저장'}
+      </button>
+    </div>
+  );
+}
+
+// ── 메인 페이지 ───────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [equipment, setEquipment] = useState<Equipment[]>([]);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     api.settings.get().then(setSettings);
+    api.equipment.list().then(setEquipment).catch(() => {});
   }, []);
 
   const save = async () => {
     if (!settings) return;
-    await sbSetAppSetting('operator_name', settings.operator_name);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    try {
+      await sbSetAppSetting('operator_name', settings.operator_name);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '저장 실패');
+    }
   };
 
   if (!settings) return <div className="text-slate-light">로딩 중...</div>;
@@ -68,6 +184,10 @@ export default function SettingsPage() {
             {import.meta.env.VITE_SUPABASE_URL ?? 'VITE_SUPABASE_URL 미설정'}
           </div>
         </div>
+      </div>
+
+      <div className="mt-6">
+        <TIEMapEditor equipment={equipment} />
       </div>
     </div>
   );

@@ -12,9 +12,6 @@ import WorkCalendar from '../components/dashboard/WorkCalendar';
 import { AlertTriangle, CheckSquare, Clock, Lightbulb, TrendingUp, Plus, Trash2 } from 'lucide-react';
 import { getHoliday } from '../utils/koreanHolidays';
 import {
-  loadLocalEvents, createLocalEvent, deleteLocalEvent, syncLocalFromApi, mergeEvents,
-} from '../utils/calendarStorage';
-import {
   EVENT_CATEGORIES, DEFAULT_EVENT_CATEGORY, categoryForEvent, eventClassName,
   type EventCategoryId,
 } from '../utils/eventCategories';
@@ -42,7 +39,6 @@ export default function Dashboard() {
   const [newEventCategory, setNewEventCategory] = useState<EventCategoryId>(DEFAULT_EVENT_CATEGORY);
   const [showEventForm, setShowEventForm] = useState(false);
   const [eventError, setEventError] = useState('');
-  const [eventInfo, setEventInfo] = useState('');
   const [savingEvent, setSavingEvent] = useState(false);
   const [editingEventId, setEditingEventId] = useState<number | null>(null);
   const [editEventTitle, setEditEventTitle] = useState('');
@@ -61,26 +57,14 @@ export default function Dashboard() {
     }
     try {
       const events = await api.calendar.list({ start_date: start, end_date: end });
-      const normalized = events.map((e) => ({
+      setScheduleEvents(events.map((e) => ({
         ...e,
         event_date: String(e.event_date).slice(0, 10),
         category: e.category || 'general',
-      }));
-      const localOnly = loadLocalEvents('1970-01-01', '2099-12-31').filter((e) => e.id < 0);
-      const merged = mergeEvents(normalized, localOnly).filter(
-        (e) => e.event_date >= start && e.event_date <= end,
-      );
-      syncLocalFromApi(mergeEvents(normalized, localOnly));
-      setScheduleEvents(merged);
+      })));
       setEventError('');
-      setEventInfo('');
-    } catch {
-      const local = loadLocalEvents(start, end);
-      setScheduleEvents(local);
-      setEventError('');
-      setEventInfo(local.length > 0
-        ? '로컬 저장 모드 (백엔드 재시작 시 서버 동기화)'
-        : '백엔드 미연결 — 일정은 브라우저에 저장됩니다.');
+    } catch (err) {
+      setEventError(err instanceof Error ? err.message : '일정 로드 실패');
     }
   }, []);
 
@@ -107,26 +91,19 @@ export default function Dashboard() {
     if (!title) return;
     setSavingEvent(true);
     setEventError('');
-    setEventInfo('');
     try {
       const created = await api.calendar.create({
         title, event_date: selectedDate, category: newEventCategory,
       });
-      const normalized = {
+      setScheduleEvents((prev) => [...prev, {
         ...created,
         event_date: String(created.event_date).slice(0, 10),
         category: created.category || newEventCategory,
-      };
-      setScheduleEvents((prev) => [...prev.filter((e) => e.id !== normalized.id), normalized]);
+      }]);
       setNewEventTitle('');
       setShowEventForm(false);
-      await loadCalendar(viewMonth);
-    } catch {
-      const local = createLocalEvent(title, selectedDate, newEventCategory);
-      setScheduleEvents((prev) => [...prev, local]);
-      setNewEventTitle('');
-      setShowEventForm(false);
-      setEventInfo('일정이 저장되었습니다 (로컬). 백엔드 재시작 후 서버에도 저장됩니다.');
+    } catch (err) {
+      setEventError(err instanceof Error ? err.message : '일정 저장 실패');
     } finally {
       setSavingEvent(false);
     }
@@ -135,16 +112,10 @@ export default function Dashboard() {
   const deleteSchedule = async (id: number) => {
     setEventError('');
     try {
-      if (id > 0) {
-        await api.calendar.delete(id);
-      } else {
-        deleteLocalEvent(id);
-      }
+      await api.calendar.delete(id);
       setScheduleEvents((prev) => prev.filter((e) => e.id !== id));
-      await loadCalendar(viewMonth);
-    } catch {
-      deleteLocalEvent(id);
-      setScheduleEvents((prev) => prev.filter((e) => e.id !== id));
+    } catch (err) {
+      setEventError(err instanceof Error ? err.message : '일정 삭제 실패');
     }
   };
 
@@ -317,9 +288,6 @@ export default function Dashboard() {
             </div>
           )}
 
-          {eventInfo && (
-            <p className="text-xs text-accent-light mb-3">{eventInfo}</p>
-          )}
           {eventError && (
             <p className="text-xs text-red-400 mb-3">{eventError}</p>
           )}

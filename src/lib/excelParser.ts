@@ -388,19 +388,56 @@ export interface ParseResult {
   filename: string
 }
 
-// ── 메인 파싱 함수 ────────────────────────────────────────────────────────────
+// ── 시트명 → 시험항목 매핑 ────────────────────────────────────────────────────
 
-export async function parseExcelFile(file: File): Promise<ParseResult> {
-  const arrayBuffer = await file.arrayBuffer()
-  // cellDates:true 로 날짜를 JS Date로 자동 변환 (XLSX.SSF 의존 제거)
-  const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array', cellDates: true })
-  const sheetName = workbook.SheetNames[0]
-  const sheet = workbook.Sheets[sheetName]
+const SHEET_TEST_ITEM_MAP: Array<[string[], string]> = [
+  [['비소as', '비소 as', 'arsenic', 'as'], '비소(As)'],
+  [['카드뮴cd', '카드뮴 cd', 'cadmium', 'cd'], '카드뮴(Cd)'],
+  [['납pb', '납 pb', 'lead', 'pb'], '납(Pb)'],
+  [['주석sn', '주석 sn', 'tin', 'sn'], '주석(Sn)'],
+  [['무기비소', 'inorganic arsenic'], '무기비소'],
+  [['수은', 'mercury', 'hg'], '수은(Hg)'],
+  [['비타민a', 'vitamin a', '^a$'], '비타민 A'],
+  [['비타민e', 'vitamin e', '^e$'], '비타민 E'],
+  [['비타민ae', 'vitamin ae'], '비타민 A/E'],
+  [['조단백', 'crude protein', 'protein'], '조단백'],
+  [['중금속', 'heavy metal'], '중금속'],
+]
 
-  // raw 2D 배열로 읽기 (raw:true 로 숫자값 원본 유지, 날짜는 Date 객체)
-  const raw: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, raw: true })
-  console.log('[parseExcelFile] 시트:', sheetName, '/ 총행수:', raw.length)
-  console.log('[parseExcelFile] raw[0]:', JSON.stringify(raw[0]))
+// 데이터가 없는 시트는 스킵
+const SKIP_SHEET_KEYWORDS = ['표준용액', 'fapas', '제조법', 'standard', 'calibration', 'qc', '검량선']
+
+function detectTestItemFromSheet(sheetName: string): string | null {
+  const low = sheetName.toLowerCase().trim()
+  for (const [keywords, label] of SHEET_TEST_ITEM_MAP) {
+    for (const kw of keywords) {
+      if (kw.startsWith('^') && kw.endsWith('$')) {
+        if (low === kw.slice(1, -1)) return label
+      } else if (low.includes(kw)) {
+        return label
+      }
+    }
+  }
+  return null
+}
+
+function shouldSkipSheet(sheetName: string): boolean {
+  const low = sheetName.toLowerCase()
+  return SKIP_SHEET_KEYWORDS.some(kw => low.includes(kw))
+}
+
+// ── 단일 시트 파싱 (내부 헬퍼) ────────────────────────────────────────────────
+
+function parseSheet(
+  raw: unknown[][],
+  sheetName: string,
+  filename: string,
+  originalFileName: string,
+  sheetTestItem: string | null,
+  filenameTestItem: string | null,
+): ParsedSample[] {
+  if (raw.length < 2) return []
+
   const strRows = raw.map(row => row.map(v => {
     if (v == null) return ''
     if (v instanceof Date) {
@@ -409,18 +446,13 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
     }
     return String(v)
   }))
-  console.log('[parseExcelFile] strRows[0]:', JSON.stringify(strRows[0]))
 
   const headerRowIdx = detectHeaderRow(strRows)
   const headers = strRows[headerRowIdx]
   const mapping = autoMapColumns(headers)
-  console.log('[parseExcelFile] 헤더행:', headerRowIdx, '/ 헤더:', headers)
-  console.log('[parseExcelFile] 컬럼매핑(JSON):', JSON.stringify(mapping))
 
-  const filenameTestItem = detectTestItemFromFilename(file.name)
-  const filename = file.name.replace(/\.[^.]+$/, '') // 확장자 제거
+  console.log(`[parseSheet] 시트:${sheetName} 헤더행:${headerRowIdx} 매핑:`, JSON.stringify(mapping))
 
-  // 데이터 행 파싱
   const samples: ParsedSample[] = []
   for (let i = headerRowIdx + 1; i < raw.length; i++) {
     const rawRow = raw[i]
@@ -429,28 +461,14 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
       row[headers[j]] = rawRow[j] ?? null
     }
 
-    // sample_id 결정
     const [sampleId, receiptNum] = resolveSampleId(row, mapping)
-    if (!sampleId) {
-      if (i <= headerRowIdx + 3) {
-        console.log(`[parseExcelFile] 행${i} sampleId 없음`)
-        console.log('  mapping.lims_id=', JSON.stringify(mapping.lims_id))
-        console.log('  row[mapping.lims_id]=', JSON.stringify(row[mapping.lims_id ?? '']))
-        console.log('  row keys:', JSON.stringify(Object.keys(row)))
-        console.log('  row LIMS key raw:', JSON.stringify(row['LIMS접수번호']))
-      }
-      continue
-    }
+    if (!sampleId) continue
 
     const sampleNameCol = mapping.sample_name
     const sampleName = sampleNameCol ? String(row[sampleNameCol] ?? '').trim() : undefined
 
-    if (isStatRow(sampleName, sampleId)) {
-      if (i < headerRowIdx + 5) console.log(`[parseExcelFile] 행${i} isStatRow=true, sampleId=${sampleId}, sampleName=${sampleName}`)
-      continue
-    }
+    if (isStatRow(sampleName, sampleId)) continue
 
-    // 결과값 / 단위
     let resultValue: string | undefined
     let unit: string | undefined
     if (mapping.result_value) {
@@ -462,7 +480,6 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
       unit = String(row[mapping.unit] ?? '').trim() || undefined
     }
 
-    // 날짜 파싱
     let analysisDate: string | null = null
     let receiptDate: string | null = null
     try {
@@ -470,13 +487,15 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
       const receiptDateRaw = mapping.receipt_date ? raw[i][headers.indexOf(mapping.receipt_date)] : null
       analysisDate = parseDate(analysisDateRaw)
       receiptDate = parseDate(receiptDateRaw)
-    } catch { /* 날짜 파싱 오류는 무시 */ }
+    } catch { /* 무시 */ }
 
     const projectNameCol = mapping.project_name
     const projectName = projectNameCol ? String(row[projectNameCol] ?? '').trim() || undefined : undefined
 
+    // 시험항목 우선순위: 컬럼값 > 시트명 > 파일명
     const testItemCol = mapping.test_item
-    const testItem = testItemCol ? String(row[testItemCol] ?? '').trim() || undefined : (filenameTestItem ?? undefined)
+    const colTestItem = testItemCol ? String(row[testItemCol] ?? '').trim() || undefined : undefined
+    const testItem = colTestItem ?? sheetTestItem ?? filenameTestItem ?? undefined
 
     const batchCol = mapping.batch_info
     const batchInfo = batchCol ? String(row[batchCol] ?? '').trim() || undefined : undefined
@@ -493,22 +512,51 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
       receipt_date: receiptDate ?? undefined,
       batch_info: batchInfo,
       is_abnormal: false,
-      source_file: file.name,
+      source_file: originalFileName,
     })
   }
 
-  // 대표 test_item (가장 많이 나온 것)
+  return samples
+}
+
+// ── 메인 파싱 함수 ────────────────────────────────────────────────────────────
+
+export async function parseExcelFile(file: File): Promise<ParseResult> {
+  const arrayBuffer = await file.arrayBuffer()
+  const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array', cellDates: true })
+  const filename = file.name.replace(/\.[^.]+$/, '')
+  const filenameTestItem = detectTestItemFromFilename(file.name)
+
+  const allSamples: ParsedSample[] = []
+
+  for (const sheetName of workbook.SheetNames) {
+    if (shouldSkipSheet(sheetName)) {
+      console.log(`[parseExcelFile] 시트 스킵: ${sheetName}`)
+      continue
+    }
+
+    const sheet = workbook.Sheets[sheetName]
+    const raw: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, raw: true })
+
+    const sheetTestItem = detectTestItemFromSheet(sheetName)
+    const samples = parseSheet(raw, sheetName, filename, file.name, sheetTestItem, filenameTestItem)
+
+    console.log(`[parseExcelFile] 시트:${sheetName} → 시험항목:${sheetTestItem ?? '(컬럼감지)'} 샘플:${samples.length}건`)
+    allSamples.push(...samples)
+  }
+
+  // 대표 test_item (가장 많이 나온 것, work_log 제목용)
   const testItemCounts: Record<string, number> = {}
-  for (const s of samples) {
+  for (const s of allSamples) {
     if (s.test_item) testItemCounts[s.test_item] = (testItemCounts[s.test_item] ?? 0) + 1
   }
   const primaryTestItem = Object.entries(testItemCounts).sort((a, b) => b[1] - a[1])[0]?.[0]
     ?? filenameTestItem ?? ''
 
-  console.log('[parseExcelFile] 최종 샘플수:', samples.length, '/ testItem:', primaryTestItem)
+  console.log(`[parseExcelFile] 전체 샘플:${allSamples.length}건 / 대표 시험항목:${primaryTestItem}`)
 
   return {
-    samples,
+    samples: allSamples,
     project_name: filename,
     test_item: primaryTestItem,
     filename: file.name,

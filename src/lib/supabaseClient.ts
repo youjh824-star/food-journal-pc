@@ -710,71 +710,82 @@ function buildStatsFromLogs(
   samplesData: { analysis_date?: string; test_item?: string; project_name?: string }[],
   days: number,
 ) {
-  // 일간 (로컬 날짜 기준)
+  // ── 일간/주간/월간: 실제 분석일(samples.analysis_date) 기준 ──────────────────
+  // work_logs.log_date는 업로드 날짜이므로 실제 분석일과 다를 수 있음
+
   const dayMap = new Map<string, number>()
-  for (let i = days - 1; i >= 0; i--) {
-    dayMap.set(daysAgo(i), 0)
-  }
-  for (const r of worklogsData) {
-    const d = String(r.log_date).slice(0, 10)
-    if (dayMap.has(d)) dayMap.set(d, (dayMap.get(d) ?? 0) + (r.workload ?? r.sample_count ?? 0))
-  }
-  const daily = [...dayMap.entries()].map(([name, value]) => ({ name: name.slice(5), value }))
+  for (let i = days - 1; i >= 0; i--) dayMap.set(daysAgo(i), 0)
 
-  // 주간
   const weekMap = new Map<string, number>()
-  for (const r of worklogsData) {
-    const d = new Date(String(r.log_date).slice(0, 10) + 'T00:00:00')
-    d.setDate(d.getDate() - d.getDay())
-    const w = localDateStr(d)
-    weekMap.set(w, (weekMap.get(w) ?? 0) + (r.workload ?? r.sample_count ?? 0))
-  }
-  const weekly = [...weekMap.entries()].sort().map(([k, value]) => ({ name: k.slice(5), value }))
-
-  // 월간
   const monthMap = new Map<string, number>()
-  for (const r of worklogsData) {
-    const m = String(r.log_date).slice(0, 7)
-    monthMap.set(m, (monthMap.get(m) ?? 0) + (r.workload ?? r.sample_count ?? 0))
+
+  // 샘플 기반 날짜 집계 (분석일 있는 경우)
+  const samplesWithDate = samplesData.filter(s => s.analysis_date)
+  if (samplesWithDate.length > 0) {
+    for (const s of samplesWithDate) {
+      const d = String(s.analysis_date).slice(0, 10)
+      // 일간
+      if (dayMap.has(d)) dayMap.set(d, (dayMap.get(d) ?? 0) + 1)
+      // 주간
+      const dt = new Date(d + 'T00:00:00')
+      dt.setDate(dt.getDate() - dt.getDay())
+      const w = localDateStr(dt)
+      weekMap.set(w, (weekMap.get(w) ?? 0) + 1)
+      // 월간
+      const m = d.slice(0, 7)
+      monthMap.set(m, (monthMap.get(m) ?? 0) + 1)
+    }
+  } else {
+    // 샘플에 분석일 없으면 work_logs.log_date 로 fallback
+    for (const r of worklogsData) {
+      const d = String(r.log_date).slice(0, 10)
+      const v = r.workload ?? r.sample_count ?? 0
+      if (dayMap.has(d)) dayMap.set(d, (dayMap.get(d) ?? 0) + v)
+      const dt = new Date(d + 'T00:00:00')
+      dt.setDate(dt.getDate() - dt.getDay())
+      weekMap.set(localDateStr(dt), (weekMap.get(localDateStr(dt)) ?? 0) + v)
+      monthMap.set(d.slice(0, 7), (monthMap.get(d.slice(0, 7)) ?? 0) + v)
+    }
   }
+
+  const daily = [...dayMap.entries()].map(([name, value]) => ({ name: name.slice(5), value }))
+  const weekly = [...weekMap.entries()].sort().map(([k, value]) => ({ name: k.slice(5), value }))
   const monthly = [...monthMap.entries()].sort().map(([name, value]) => ({ name, value }))
 
-  // 시험항목별 (샘플 기준 — 더 세밀함)
+  // ── 시험항목별: 샘플 기준 ────────────────────────────────────────────────────
   const testItemMap = new Map<string, number>()
   for (const s of samplesData) {
     if (s.test_item) testItemMap.set(s.test_item, (testItemMap.get(s.test_item) ?? 0) + 1)
   }
-  // 샘플 데이터 없으면 work_logs 기준으로 fallback
   if (testItemMap.size === 0) {
     for (const r of worklogsData) {
       if (r.test_item) testItemMap.set(r.test_item, (testItemMap.get(r.test_item) ?? 0) + (r.workload ?? r.sample_count ?? 1))
     }
   }
 
-  // 장비별 (work_logs.equipment_name 기준 — 샘플에는 equipment_id가 없음)
+  // ── 장비별: work_logs.equipment_name 기준 ────────────────────────────────────
   const equipMap = new Map<string, number>()
   for (const r of worklogsData) {
     const name = r.equipment_name?.trim() || '미배정'
     equipMap.set(name, (equipMap.get(name) ?? 0) + (r.workload ?? r.sample_count ?? 1))
   }
 
-  // 시험항목 × 장비 매핑
-  type TIEKey = string
-  const tieMap = new Map<TIEKey, number>()
+  // ── 시험항목 × 장비 매핑 ─────────────────────────────────────────────────────
+  const tieMap2 = new Map<string, number>()
   for (const r of worklogsData) {
     if (!r.test_item) continue
     const eq = r.equipment_name?.trim() || '미배정'
     const key = `${r.test_item}||${eq}`
-    tieMap.set(key, (tieMap.get(key) ?? 0) + (r.workload ?? r.sample_count ?? 1))
+    tieMap2.set(key, (tieMap2.get(key) ?? 0) + (r.workload ?? r.sample_count ?? 1))
   }
-  const test_item_equipment = [...tieMap.entries()]
+  const test_item_equipment = [...tieMap2.entries()]
     .sort((a, b) => b[1] - a[1])
     .map(([key, count]) => {
       const [test_item, equipment] = key.split('||')
       return { test_item, equipment, count }
     })
 
-  // 프로젝트별
+  // ── 프로젝트별: 샘플 기준 ────────────────────────────────────────────────────
   const projectMap = new Map<string, number>()
   for (const s of samplesData) {
     if (s.project_name) projectMap.set(s.project_name, (projectMap.get(s.project_name) ?? 0) + 1)
@@ -805,16 +816,17 @@ function applyTIEMap(
 
 export async function sbGetStatistics(params?: Record<string, string>): Promise<Statistics> {
   const days = parseInt(params?.days ?? '30')
-  const startDate = daysAgo(days)
+  const startDate = daysAgo(days - 1)  // 오늘 포함 days일
+  const endDate = today()
 
   const [wlRes, sRes, tieMap] = await Promise.all([
     supabase.from('work_logs')
       .select('log_date, sample_count, workload, test_item, equipment_name')
-      .gte('log_date', startDate)
+      .gte('log_date', startDate).lte('log_date', endDate)
       .order('log_date'),
     supabase.from('samples')
       .select('analysis_date, test_item, project_name')
-      .gte('analysis_date', startDate),
+      .gte('analysis_date', startDate).lte('analysis_date', endDate),
     loadTIEMap(),
   ])
 

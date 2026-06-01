@@ -48,8 +48,8 @@ const COLUMN_ALIASES: Record<string, string[]> = {
   analysis_date: [
     'date', 'analysis date', 'analysis_date', 'run date',
     'measurement date', 'time', 'datetime',
-    '분析일', '분석일', '시험일', '실험일',
-    '분析일자', '분析일자', '분析 일자', '분석일자', '분석날짜',
+    '분석일', '분석일', '시험일', '실험일',
+    '분석일자', '분석일자', '분석 일자', '분석일자', '분석날짜',
     '시험일자', '시험 일자', '시험날짜',
     '작업일', '작업일자', '측정일', '측정 일자',
     '검사일', '검사일자', '접수 및 시험일',
@@ -99,11 +99,11 @@ const STAT_ROW_KEYWORDS = new Set([
 ])
 
 const HEADER_KEYWORDS = [
-  '접수번호', 'lims', '샘플명', '시료명', '결과값', '시험일', '분析일', '분析일자',
+  '접수번호', 'lims', '샘플명', '시료명', '결과값', '시험일', '분석일', '분석일자',
   'sample', 'result', 'concentration', 'no.', '접수', '시험항목',
   '의뢰명', '업체명', '의뢰자', '고객명',
   '품명', '검체', '함량', '정량', '측정', '번호', '분석항목', '일자',
-  '측정값', '함유량', '분析결과', '단위', '성분',
+  '측정값', '함유량', '분석결과', '단위', '성분',
   '의뢰업체', '검체명',
   '조단백', '단백질', 'crude protein',
   '비타민a', '비타민e', '비타민 a', '비타민 e', 'α-te', 'retinol',
@@ -120,6 +120,7 @@ function normalizeCol(col: string): string {
 function aliasMatch(colNorm: string, alias: string): boolean {
   const aliasNorm = normalizeCol(alias).trim()
   const colClean = colNorm.replace(/\n/g, ' ').trim()
+  if (!colClean) return false  // 빈 헤더 칸은 어떤 alias도 매칭하지 않음
   if (colClean === aliasNorm) return true
   if (aliasNorm.length > 0 && (aliasNorm.includes(colClean) || colClean.includes(aliasNorm))) return true
   // 한글 키워드 부분 포함
@@ -141,14 +142,22 @@ function isStatRow(sampleName?: string, sampleId?: string): boolean {
 
 function parseDate(value: unknown): string | null {
   if (value == null || value === '') return null
+  // cellDates:true 사용 시 JS Date 객체로 들어옴
+  if (value instanceof Date) {
+    if (isNaN(value.getTime())) return null
+    return value.toISOString().slice(0, 10)
+  }
   if (typeof value === 'number') {
-    // Excel 날짜 직렬 숫자
-    const d = XLSX.SSF.parse_date_code(value)
-    if (d) {
-      const mm = String(d.m).padStart(2, '0')
-      const dd = String(d.d).padStart(2, '0')
-      return `${d.y}-${mm}-${dd}`
-    }
+    // 혹시 날짜 직렬 숫자가 남아있는 경우 (fallback)
+    try {
+      // Excel 기준일: 1900-01-00 = 일련번호 0
+      const excelEpoch = new Date(Date.UTC(1899, 11, 30))
+      const d = new Date(excelEpoch.getTime() + value * 86400000)
+      if (!isNaN(d.getTime()) && d.getFullYear() > 1900) {
+        return d.toISOString().slice(0, 10)
+      }
+    } catch { /* 무시 */ }
+    return null
   }
   const s = String(value).trim()
   if (!s || s.toLowerCase() === 'nan') return null
@@ -208,13 +217,40 @@ function scoreHeaderRow(rows: string[][], idx: number): number {
   return score
 }
 
+// 헤더행 직접 감지: 숫자/날짜가 아닌 텍스트 셀이 많은 첫 번째 행
+function isLikelyHeaderRow(cells: string[]): boolean {
+  const nonEmpty = cells.filter(c => c !== '')
+  if (nonEmpty.length === 0) return false
+  // 숫자만인 셀이 절반 이상이면 헤더 아님
+  const numericOnly = nonEmpty.filter(c => /^[\d.,+\-]+$/.test(c))
+  // ISO 날짜 패턴도 헤더 아님
+  const dateOnly = nonEmpty.filter(c => /^\d{4}-\d{2}-\d{2}/.test(c))
+  if ((numericOnly.length + dateOnly.length) >= nonEmpty.length / 2) return false
+  // LIMS 키워드나 알려진 컬럼명 포함 여부로 직접 판단
+  const joined = cells.join(' ').toLowerCase()
+  const HEADER_SIGNALS = [
+    'lims', '시료명', '검체명', 'sample', 'result', 'concentration',
+    '결과값', '접수번호', '번호', 'mg/kg', '분석일', '분석일', '시험일',
+  ]
+  return HEADER_SIGNALS.some(s => joined.includes(s.toLowerCase()))
+}
+
 function detectHeaderRow(rows: string[][]): number {
+  // 1차: 처음 15행 중 헤더처럼 보이는 첫 번째 행 직접 탐색
+  for (let i = 0; i < Math.min(15, rows.length); i++) {
+    if (isLikelyHeaderRow(rows[i])) {
+      console.log('[detectHeaderRow] 직접탐색 row', i, ':', rows[i])
+      return i
+    }
+  }
+  // 2차: 점수 기반 (fallback)
   let bestRow = 0
   let bestScore = 0
   for (let i = 0; i < Math.min(20, rows.length); i++) {
     const s = scoreHeaderRow(rows, i)
     if (s > bestScore) { bestScore = s; bestRow = i }
   }
+  console.log('[detectHeaderRow] 점수기반 row', bestRow, 'score', bestScore)
   return bestScore >= 3 ? bestRow : 0
 }
 
@@ -356,17 +392,30 @@ export interface ParseResult {
 
 export async function parseExcelFile(file: File): Promise<ParseResult> {
   const arrayBuffer = await file.arrayBuffer()
-  const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: false })
+  // cellDates:true 로 날짜를 JS Date로 자동 변환 (XLSX.SSF 의존 제거)
+  const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array', cellDates: true })
   const sheetName = workbook.SheetNames[0]
   const sheet = workbook.Sheets[sheetName]
 
-  // raw 2D 배열로 읽기
+  // raw 2D 배열로 읽기 (raw:true 로 숫자값 원본 유지, 날짜는 Date 객체)
   const raw: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, raw: true })
-  const strRows = raw.map(row => row.map(v => v == null ? '' : String(v)))
+  console.log('[parseExcelFile] 시트:', sheetName, '/ 총행수:', raw.length)
+  console.log('[parseExcelFile] raw[0]:', JSON.stringify(raw[0]))
+  const strRows = raw.map(row => row.map(v => {
+    if (v == null) return ''
+    if (v instanceof Date) {
+      if (isNaN(v.getTime())) return ''
+      return v.toISOString().slice(0, 10)
+    }
+    return String(v)
+  }))
+  console.log('[parseExcelFile] strRows[0]:', JSON.stringify(strRows[0]))
 
   const headerRowIdx = detectHeaderRow(strRows)
   const headers = strRows[headerRowIdx]
   const mapping = autoMapColumns(headers)
+  console.log('[parseExcelFile] 헤더행:', headerRowIdx, '/ 헤더:', headers)
+  console.log('[parseExcelFile] 컬럼매핑(JSON):', JSON.stringify(mapping))
 
   const filenameTestItem = detectTestItemFromFilename(file.name)
   const filename = file.name.replace(/\.[^.]+$/, '') // 확장자 제거
@@ -382,12 +431,24 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
 
     // sample_id 결정
     const [sampleId, receiptNum] = resolveSampleId(row, mapping)
-    if (!sampleId) continue
+    if (!sampleId) {
+      if (i <= headerRowIdx + 3) {
+        console.log(`[parseExcelFile] 행${i} sampleId 없음`)
+        console.log('  mapping.lims_id=', JSON.stringify(mapping.lims_id))
+        console.log('  row[mapping.lims_id]=', JSON.stringify(row[mapping.lims_id ?? '']))
+        console.log('  row keys:', JSON.stringify(Object.keys(row)))
+        console.log('  row LIMS key raw:', JSON.stringify(row['LIMS접수번호']))
+      }
+      continue
+    }
 
     const sampleNameCol = mapping.sample_name
     const sampleName = sampleNameCol ? String(row[sampleNameCol] ?? '').trim() : undefined
 
-    if (isStatRow(sampleName, sampleId)) continue
+    if (isStatRow(sampleName, sampleId)) {
+      if (i < headerRowIdx + 5) console.log(`[parseExcelFile] 행${i} isStatRow=true, sampleId=${sampleId}, sampleName=${sampleName}`)
+      continue
+    }
 
     // 결과값 / 단위
     let resultValue: string | undefined
@@ -401,12 +462,15 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
       unit = String(row[mapping.unit] ?? '').trim() || undefined
     }
 
-    // 날짜 파싱 (Excel 직렬 숫자 처리)
-    const analysisDateRaw = mapping.analysis_date ? raw[i][headers.indexOf(mapping.analysis_date)] : null
-    const receiptDateRaw = mapping.receipt_date ? raw[i][headers.indexOf(mapping.receipt_date)] : null
-
-    const analysisDate = parseDate(analysisDateRaw)
-    const receiptDate = parseDate(receiptDateRaw)
+    // 날짜 파싱
+    let analysisDate: string | null = null
+    let receiptDate: string | null = null
+    try {
+      const analysisDateRaw = mapping.analysis_date ? raw[i][headers.indexOf(mapping.analysis_date)] : null
+      const receiptDateRaw = mapping.receipt_date ? raw[i][headers.indexOf(mapping.receipt_date)] : null
+      analysisDate = parseDate(analysisDateRaw)
+      receiptDate = parseDate(receiptDateRaw)
+    } catch { /* 날짜 파싱 오류는 무시 */ }
 
     const projectNameCol = mapping.project_name
     const projectName = projectNameCol ? String(row[projectNameCol] ?? '').trim() || undefined : undefined
@@ -440,6 +504,8 @@ export async function parseExcelFile(file: File): Promise<ParseResult> {
   }
   const primaryTestItem = Object.entries(testItemCounts).sort((a, b) => b[1] - a[1])[0]?.[0]
     ?? filenameTestItem ?? ''
+
+  console.log('[parseExcelFile] 최종 샘플수:', samples.length, '/ testItem:', primaryTestItem)
 
   return {
     samples,

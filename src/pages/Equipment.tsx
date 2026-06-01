@@ -54,6 +54,7 @@ function fmtDt(iso?: string) {
 function toLocalInput(iso?: string) {
   if (!iso) return '';
   const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
@@ -80,7 +81,7 @@ export default function EquipmentPage() {
   const [issueForm, setIssueForm] = useState(issueToForm());
   const [editIssueForm, setEditIssueForm] = useState(issueToForm());
 
-  const load = () => api.equipment.list().then(setItems);
+  const load = () => api.equipment.list().then(setItems).catch((e: unknown) => console.error('장비 로드 실패:', e));
   useEffect(() => { load(); }, []);
 
   const loadIssues = async (eqId: number) => {
@@ -103,18 +104,22 @@ export default function EquipmentPage() {
 
   const handleCreate = async () => {
     if (!form.name.trim()) return;
-    await api.equipment.create({
-      name: form.name,
-      model: form.model || undefined,
-      equipment_type: form.equipment_type || undefined,
-      analysis_items: form.analysis_items || undefined,
-      notes: form.notes || undefined,
-      last_maintenance: form.last_maintenance || undefined,
-      next_maintenance: form.next_maintenance || undefined,
-    });
-    setForm(emptyEqForm());
-    setShowForm(false);
-    load();
+    try {
+      await api.equipment.create({
+        name: form.name,
+        model: form.model || undefined,
+        equipment_type: form.equipment_type || undefined,
+        analysis_items: form.analysis_items || undefined,
+        notes: form.notes || undefined,
+        last_maintenance: form.last_maintenance || undefined,
+        next_maintenance: form.next_maintenance || undefined,
+      });
+      setForm(emptyEqForm());
+      setShowForm(false);
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '장비 등록 실패');
+    }
   };
 
   const startEditEq = (eq: Equipment) => {
@@ -124,39 +129,50 @@ export default function EquipmentPage() {
   };
 
   const handleSaveEq = async (eqId: number) => {
-    await api.equipment.update(eqId, {
-      name: editForm.name,
-      model: editForm.model || undefined,
-      equipment_type: editForm.equipment_type || undefined,
-      analysis_items: editForm.analysis_items || undefined,
-      notes: editForm.notes || undefined,
-      last_maintenance: editForm.last_maintenance || undefined,
-      next_maintenance: editForm.next_maintenance || undefined,
-    });
-    setEditingEqId(null);
-    load();
+    try {
+      await api.equipment.update(eqId, {
+        name: editForm.name,
+        model: editForm.model || undefined,
+        equipment_type: editForm.equipment_type || undefined,
+        analysis_items: editForm.analysis_items || undefined,
+        notes: editForm.notes || undefined,
+        last_maintenance: editForm.last_maintenance || undefined,
+        next_maintenance: editForm.next_maintenance || undefined,
+      });
+      setEditingEqId(null);
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '장비 수정 실패');
+    }
   };
 
   const handleDelete = async (id: number) => {
-    if (confirm('삭제하시겠습니까?')) {
+    if (!confirm('삭제하시겠습니까?')) return;
+    try {
       await api.equipment.delete(id);
       if (expandedId === id) setExpandedId(null);
       load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '장비 삭제 실패');
     }
   };
 
   const handleAddIssue = async (eqId: number) => {
     if (!issueForm.title.trim()) return;
-    await api.equipment.createIssue(eqId, {
-      title: issueForm.title,
-      description: issueForm.description || undefined,
-      issue_type: issueForm.issue_type,
-      occurred_at: new Date(issueForm.occurred_at).toISOString(),
-      notes: issueForm.notes || undefined,
-    });
-    setIssueForm(issueToForm());
-    await loadIssues(eqId);
-    load();
+    try {
+      await api.equipment.createIssue(eqId, {
+        title: issueForm.title,
+        description: issueForm.description || undefined,
+        issue_type: issueForm.issue_type,
+        occurred_at: new Date(issueForm.occurred_at).toISOString(),
+        notes: issueForm.notes || undefined,
+      });
+      setIssueForm(issueToForm());
+      await loadIssues(eqId);
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '이력 추가 실패');
+    }
   };
 
   const startEditIssue = (issue: EquipmentIssue) => {
@@ -165,32 +181,44 @@ export default function EquipmentPage() {
   };
 
   const handleSaveIssue = async (eqId: number, issueId: number) => {
-    await api.equipment.updateIssue(issueId, {
-      title: editIssueForm.title,
-      description: editIssueForm.description || undefined,
-      issue_type: editIssueForm.issue_type,
-      occurred_at: new Date(editIssueForm.occurred_at).toISOString(),
-      notes: editIssueForm.notes || undefined,
-    });
-    setEditingIssueId(null);
-    await loadIssues(eqId);
+    try {
+      await api.equipment.updateIssue(issueId, {
+        title: editIssueForm.title,
+        description: editIssueForm.description || undefined,
+        issue_type: editIssueForm.issue_type,
+        occurred_at: new Date(editIssueForm.occurred_at).toISOString(),
+        notes: editIssueForm.notes || undefined,
+      });
+      setEditingIssueId(null);
+      await loadIssues(eqId);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '이력 수정 실패');
+    }
   };
 
   const handleResolve = async (eqId: number, issue: EquipmentIssue) => {
-    await api.equipment.updateIssue(issue.id, {
-      status: 'resolved',
-      repaired_at: new Date().toISOString(),
-    });
-    await loadIssues(eqId);
-    load();
+    try {
+      await api.equipment.updateIssue(issue.id, {
+        status: 'resolved',
+        repaired_at: new Date().toISOString(),
+      });
+      await loadIssues(eqId);
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '수리완료 처리 실패');
+    }
   };
 
   const handleDeleteIssue = async (eqId: number, issueId: number) => {
     if (!confirm('이력을 삭제하시겠습니까?')) return;
-    await api.equipment.deleteIssue(issueId);
-    if (editingIssueId === issueId) setEditingIssueId(null);
-    await loadIssues(eqId);
-    load();
+    try {
+      await api.equipment.deleteIssue(issueId);
+      if (editingIssueId === issueId) setEditingIssueId(null);
+      await loadIssues(eqId);
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '이력 삭제 실패');
+    }
   };
 
   const renderEqForm = (

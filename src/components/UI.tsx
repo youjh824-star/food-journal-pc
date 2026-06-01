@@ -139,7 +139,7 @@ export function DropZone({ onDrop, processing }: {
         <>
           <Upload className="w-12 h-12 text-accent mx-auto mb-4 opacity-60" />
           <p className="text-white font-medium mb-1">결과파일을 드래그앤드롭</p>
-          <p className="text-sm text-slate-light">Excel (.xlsx), CSV, TXT 지원</p>
+          <p className="text-sm text-slate-light">Excel (.xlsx, .xls), CSV, TXT 지원</p>
           <p className="text-xs text-slate-lab mt-2">ICP-MS · HPLC · GC · LC/MS · UV · 수분측정기</p>
         </>
       )}

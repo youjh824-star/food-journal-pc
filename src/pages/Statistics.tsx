@@ -12,12 +12,17 @@ import {
 export default function StatisticsPage() {
   const [stats, setStats] = useState<Statistics | null>(null);
   const [period, setPeriod] = useState<30 | 90>(30);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setStats(null);
-    api.statistics({ days: String(period) }).then(setStats);
+    setError(null);
+    api.statistics({ days: String(period) })
+      .then(setStats)
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : '통계 로드 실패'));
   }, [period]);
 
+  if (error) return <div className="text-red-400 p-4">{error}</div>;
   if (!stats) return <div className="text-slate-light">로딩 중...</div>;
 
   const daily = normalizeChartData(stats.daily);

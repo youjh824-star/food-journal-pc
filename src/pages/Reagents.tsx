@@ -130,15 +130,19 @@ export default function ReagentsPage() {
   const [form, setForm] = useState(emptyForm());
   const [editForm, setEditForm] = useState(emptyForm());
 
-  const load = () => api.reagents.list().then(setItems);
+  const load = () => api.reagents.list().then(setItems).catch((e: unknown) => console.error('시약 로드 실패:', e));
   useEffect(() => { load(); }, []);
 
   const handleCreate = async () => {
     if (!form.name.trim()) return;
-    await api.reagents.create(formToPayload(form));
-    setForm(emptyForm());
-    setShowForm(false);
-    load();
+    try {
+      await api.reagents.create(formToPayload(form));
+      setForm(emptyForm());
+      setShowForm(false);
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '시약 등록 실패');
+    }
   };
 
   const startEdit = (r: Reagent) => {
@@ -149,16 +153,24 @@ export default function ReagentsPage() {
 
   const handleSave = async () => {
     if (editingId == null || !editForm.name.trim()) return;
-    await api.reagents.update(editingId, formToPayload(editForm));
-    setEditingId(null);
-    load();
+    try {
+      await api.reagents.update(editingId, formToPayload(editForm));
+      setEditingId(null);
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '시약 수정 실패');
+    }
   };
 
   const handleDelete = async (id: number) => {
     if (!confirm('삭제하시겠습니까?')) return;
-    await api.reagents.delete(id);
-    if (editingId === id) setEditingId(null);
-    load();
+    try {
+      await api.reagents.delete(id);
+      if (editingId === id) setEditingId(null);
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '시약 삭제 실패');
+    }
   };
 
   const isLowStock = (r: Reagent) => r.stock_amount <= r.min_stock;

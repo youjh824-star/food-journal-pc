@@ -191,7 +191,7 @@ export default function TodosPage() {
   const [form, setForm] = useState(emptyForm());
   const [editForm, setEditForm] = useState(emptyForm());
 
-  const load = () => api.todos.list().then(setItems);
+  const load = () => api.todos.list().then(setItems).catch((e: unknown) => console.error('할일 로드 실패:', e));
   useEffect(() => { load(); }, []);
 
   const today = new Date().toISOString().slice(0, 10);
@@ -205,29 +205,45 @@ export default function TodosPage() {
 
   const handleCreate = async () => {
     if (!form.title.trim()) return;
-    await api.todos.create(formToPayload(form));
-    setForm(emptyForm());
-    setShowForm(false);
-    load();
+    try {
+      await api.todos.create(formToPayload(form));
+      setForm(emptyForm());
+      setShowForm(false);
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '등록 실패');
+    }
   };
 
   const handleSave = async () => {
     if (editingId == null || !editForm.title.trim()) return;
-    await api.todos.update(editingId, formToPayload(editForm));
-    setEditingId(null);
-    load();
+    try {
+      await api.todos.update(editingId, formToPayload(editForm));
+      setEditingId(null);
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '수정 실패');
+    }
   };
 
   const handleToggle = async (id: number) => {
-    await api.todos.toggle(id);
-    load();
+    try {
+      await api.todos.toggle(id);
+      load();
+    } catch (e) {
+      console.error('토글 실패:', e);
+    }
   };
 
   const handleDelete = async (id: number) => {
     if (!confirm('삭제하시겠습니까?')) return;
-    await api.todos.delete(id);
-    if (editingId === id) setEditingId(null);
-    load();
+    try {
+      await api.todos.delete(id);
+      if (editingId === id) setEditingId(null);
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '삭제 실패');
+    }
   };
 
   const tabs = [

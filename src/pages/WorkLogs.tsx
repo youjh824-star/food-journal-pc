@@ -124,21 +124,29 @@ export default function WorkLogs() {
     const params: Record<string, string> = {};
     if (search) params.search = search;
     if (statusFilter) params.status = statusFilter;
-    api.worklogs(params).then(setLogs);
+    api.worklogs(params).then(setLogs).catch((e: unknown) => console.error('업무일지 로드 실패:', e));
   };
 
   useEffect(() => { load(); }, [search, statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDelete = async (id: number, withSamples: boolean) => {
-    setDeleteTarget(null);
-    await api.deleteWorklog(id, withSamples);
-    load();
+    try {
+      await api.deleteWorklog(id, withSamples);
+      setDeleteTarget(null);
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '삭제 실패');
+    }
   };
 
   const handleEdit = async (id: number, name: string) => {
-    setEditTarget(null);
-    await api.updateWorklog(id, { project_name: name });
-    load();
+    try {
+      await api.updateWorklog(id, { project_name: name });
+      setEditTarget(null);
+      load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '수정 실패');
+    }
   };
 
   return (

@@ -141,19 +141,21 @@ export default function Dashboard() {
           color: categoryForEvent({ category: editEventCategory }).color,
         } : e)));
       }
-    } catch {
-      setScheduleEvents((prev) => prev.map((e) => (e.id === ev.id ? {
-        ...e, title, category: editEventCategory,
-      } : e)));
+      setEditingEventId(null);
+      setEditEventTitle('');
+    } catch (err) {
+      setEventError(err instanceof Error ? err.message : '일정 수정 실패');
     }
-    setEditingEventId(null);
-    setEditEventTitle('');
   };
 
   const toggleTodo = async (id: number) => {
-    await api.todos.toggle(id);
-    const d = await api.dashboard();
-    setData(d);
+    try {
+      await api.todos.toggle(id);
+      const d = await api.dashboard();
+      setData(d);
+    } catch (e) {
+      console.error('할일 토글 실패:', e);
+    }
   };
 
   return (

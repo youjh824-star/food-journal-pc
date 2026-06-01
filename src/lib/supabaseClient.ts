@@ -174,12 +174,16 @@ async function processSamples(samples: ParsedSample[], _projectName: string) {
   const sampleIds = samples.map(s => s.sample_id).filter(Boolean)
   const existingMap = new Map<string, { result_value?: string; analysis_date?: string }>()
   if (sampleIds.length > 0) {
-    const { data: existing } = await supabase
-      .from('samples')
-      .select('sample_id, result_value, analysis_date')
-      .in('sample_id', sampleIds.slice(0, 100))
-    for (const e of existing ?? []) {
-      if (e.sample_id) existingMap.set(e.sample_id, e)
+    // 100개씩 배치 조회 (Supabase .in() 한도)
+    for (let i = 0; i < sampleIds.length; i += 100) {
+      const batch = sampleIds.slice(i, i + 100)
+      const { data: existing } = await supabase
+        .from('samples')
+        .select('sample_id, result_value, analysis_date')
+        .in('sample_id', batch)
+      for (const e of existing ?? []) {
+        if (e.sample_id) existingMap.set(e.sample_id, e)
+      }
     }
   }
 

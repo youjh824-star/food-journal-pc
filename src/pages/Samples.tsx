@@ -247,7 +247,7 @@ function RetestCompareView({ groups }: { groups: CompareGroup[] }) {
                   <th className="text-left px-4 py-2">시료명</th>
                   <th className="text-left px-4 py-2">시험항목</th>
                   <th className="text-left px-4 py-2">접수번호</th>
-                  <th className="text-left px-4 py-2">분析일</th>
+                  <th className="text-left px-4 py-2">분석일</th>
                   <th className="text-left px-4 py-2">결과</th>
                   <th className="text-left px-4 py-2">상태</th>
                 </tr>
@@ -321,7 +321,7 @@ function SampleTableRow({ s }: { s: Sample }) {
       <td className="px-3 py-2.5 font-mono text-xs text-slate-lab whitespace-nowrap">
         {s.receipt_date || '-'}
       </td>
-      {/* 분析일 */}
+      {/* 분석일 */}
       <td className="px-3 py-2.5 font-mono text-xs text-slate-lab whitespace-nowrap">
         {s.analysis_date || '-'}
       </td>
@@ -337,7 +337,7 @@ function SampleTable({ samples }: { samples: Sample[] }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-navy-700 bg-navy-900/60">
-              {['접수번호','시료명','시험항목','결과','기준값 비교','단위','접수일','분析일'].map(h => (
+              {['접수번호','시료명','시험항목','결과','기준값 비교','단위','접수일','분석일'].map(h => (
                 <th key={h} className="px-3 py-2.5 text-left text-xs font-medium text-slate-lab tracking-wide whitespace-nowrap">
                   {h}
                 </th>
@@ -372,7 +372,9 @@ export default function Samples() {
   }, [search]);
 
   const loadTestItems = useCallback(() => {
-    api.sampleTestItems().then(d => { setTestItems(d.items); setTotalCount(d.total); }).catch(() => {});
+    api.sampleTestItems()
+      .then(d => { setTestItems(d.items); setTotalCount(d.total); })
+      .catch((e: unknown) => console.error('시험항목 로드 실패:', e));
   }, []);
 
   const loadSamples = useCallback(async () => {
@@ -383,16 +385,23 @@ export default function Samples() {
         if (cmp.mode === 'list') setSamples(cmp.samples as Sample[]);
         else setSamples([]);
         return;
-      } catch { setCompareData(null); }
+      } catch (e) {
+        console.error('검색 실패:', e);
+        setCompareData(null);
+      }
     } else {
       setCompareData(null);
     }
-    const params: Record<string, string> = {};
-    if (debouncedSearch) params.search = debouncedSearch;
-    if (testItemFilter) params.test_item = testItemFilter;
-    if (abnormalOnly) params.abnormal_only = 'true';
-    if (retestOnly) params.retest_only = 'true';
-    setSamples(await api.samples(params));
+    try {
+      const params: Record<string, string> = {};
+      if (debouncedSearch) params.search = debouncedSearch;
+      if (testItemFilter) params.test_item = testItemFilter;
+      if (abnormalOnly) params.abnormal_only = 'true';
+      if (retestOnly) params.retest_only = 'true';
+      setSamples(await api.samples(params));
+    } catch (e) {
+      console.error('샘플 로드 실패:', e);
+    }
   }, [debouncedSearch, testItemFilter, abnormalOnly, retestOnly]);
 
   useEffect(() => { loadTestItems(); }, [loadTestItems]);
@@ -400,9 +409,14 @@ export default function Samples() {
 
   const resetFilters = () => { setSearch(''); setTestItemFilter(''); setAbnormalOnly(false); setRetestOnly(false); };
   const handleBulkDelete = async () => {
-    setShowBulkDelete(false);
-    await api.deleteAllSamples();
-    setSamples([]); setTotalCount(0); loadTestItems();
+    try {
+      await api.deleteAllSamples();
+      setShowBulkDelete(false);
+      setSamples([]); setTotalCount(0); loadTestItems();
+    } catch (e) {
+      setShowBulkDelete(false);
+      alert(e instanceof Error ? e.message : '삭제 실패');
+    }
   };
 
   const isCompareMode = compareData?.mode === 'compare' && (compareData.groups?.length ?? 0) > 0;

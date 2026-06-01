@@ -14,16 +14,26 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
-// ── 날짜 헬퍼 ────────────────────────────────────────────────────────────────
+// ── 날짜 헬퍼 (로컬 시간 기준 — UTC 기준이면 KST와 최대 9시간 차이) ──────────
 
+function localDateStr(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
 function today(): string {
-  return new Date().toISOString().slice(0, 10)
+  return localDateStr(new Date())
 }
 function daysAgo(n: number): string {
-  return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10)
+  const d = new Date()
+  d.setDate(d.getDate() - n)
+  return localDateStr(d)
 }
 function daysLater(n: number): string {
-  return new Date(Date.now() + n * 86400000).toISOString().slice(0, 10)
+  const d = new Date()
+  d.setDate(d.getDate() + n)
+  return localDateStr(d)
 }
 
 // ── 업무일지 ──────────────────────────────────────────────────────────────────

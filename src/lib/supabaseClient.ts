@@ -270,6 +270,14 @@ export async function sbUploadFile(file: File, equipmentId?: number): Promise<Up
     equipmentName = eq?.name
   }
 
+  // 같은 파일명으로 기존에 올린 데이터가 있으면 먼저 삭제 (덮어쓰기)
+  const { data: existingLogs } = await supabase
+    .from('work_logs').select('id').eq('source_file', file.name)
+  if (existingLogs && existingLogs.length > 0) {
+    await supabase.from('samples').delete().eq('source_file', file.name)
+    await supabase.from('work_logs').delete().eq('source_file', file.name)
+  }
+
   // 업무일지 생성
   const { data: wl, error: wlErr } = await supabase.from('work_logs').insert([{
     log_date: today(),
@@ -282,7 +290,7 @@ export async function sbUploadFile(file: File, equipmentId?: number): Promise<Up
     duration_hours: 8,
     status: 'completed',
     auto_generated: true,
-    source_file: filename,
+    source_file: file.name,
   }]).select().single()
   if (wlErr) throw new Error(wlErr.message)
 

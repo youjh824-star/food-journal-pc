@@ -114,6 +114,135 @@ export async function sbDeleteAllSamples(): Promise<{ deleted: number }> {
   return { deleted: all.length }
 }
 
+// ── 샘플 비교 (시료명 기준 그룹화) ───────────────────────────────────────────
+
+const RETEST_PATTERNS = [
+  /[\s\-_]*[\(\[](재실험|재검|재시험|재)[\)\]]?$/,
+  /[\s\-_]+(재실험|재검|재시험)$/,
+]
+
+function normalizeNameForGroup(name: string): string {
+  let n = name.trim()
+  for (const pat of RETEST_PATTERNS) n = n.replace(pat, '').trim()
+  return n.toLowerCase()
+}
+
+function isRetestBySuffix(name: string): boolean {
+  return RETEST_PATTERNS.some(p => p.test(name.trim()))
+}
+
+type RetestEntry = {
+  id: number; sample_name: string; result: string | null; unit: string | null
+  date: string | null; receipt_number: string | null
+  delta: number | null; delta_pct: number | null
+  label: string | null; color: 'green' | 'yellow' | 'red' | null
+}
+
+function buildRetestEntry(s: Sample, originalVal?: string | null): RetestEntry {
+  const result = s.result_value ?? null
+  let delta: number | null = null
+  let delta_pct: number | null = null
+  let label: string | null = null
+  let color: 'green' | 'yellow' | 'red' | null = null
+
+  if (originalVal != null && result != null) {
+    const orig = parseFloat(originalVal)
+    const cur = parseFloat(result)
+    if (!isNaN(orig) && !isNaN(cur) && orig !== 0) {
+      delta = cur - orig
+      delta_pct = Math.abs(delta / orig) * 100
+      color = delta_pct < 10 ? 'green' : delta_pct < 20 ? 'yellow' : 'red'
+      const sign = delta >= 0 ? '+' : ''
+      label = `${sign}${delta.toFixed(4)} (${delta_pct.toFixed(1)}%)`
+    }
+  }
+  return {
+    id: s.id,
+    sample_name: s.sample_name ?? s.sample_id,
+    result,
+    unit: s.unit ?? null,
+    date: s.analysis_date ?? null,
+    receipt_number: (s as unknown as Record<string, unknown>).receipt_number as string ?? null,
+    delta, delta_pct, label, color,
+  }
+}
+
+export async function sbSampleCompare(search: string, testItem?: string) {
+  // 시료명/LIMS번호로 검색 (재실험 접미사 포함 모두 가져오기)
+  let q = supabase.from('samples').select('*')
+    .or(`sample_name.ilike.%${search}%,sample_id.ilike.%${search}%`)
+    .order('analysis_date', { ascending: true })
+  if (testItem) q = q.eq('test_item', testItem)
+  const { data, error } = await q
+  if (error) throw new Error(error.message)
+  const samples = (data ?? []) as unknown as Sample[]
+  if (samples.length === 0) return { mode: 'list' as const, groups: [], samples: [] }
+
+  // 시료명 정규화 후 그룹화
+  const groupMap = new Map<string, Sample[]>()
+  for (const s of samples) {
+    const key = normalizeNameForGroup(s.sample_name ?? s.sample_id ?? '')
+    if (!key) continue
+    if (!groupMap.has(key)) groupMap.set(key, [])
+    groupMap.get(key)!.push(s)
+  }
+
+  // 그룹이 없거나 모두 단건이면 list 모드
+  const multiGroups = [...groupMap.values()].filter(g =>
+    g.length > 1 || g.some(s => s.is_retest || isRetestBySuffix(s.sample_name ?? ''))
+  )
+  if (multiGroups.length === 0) return { mode: 'list' as const, groups: [], samples }
+
+  // CompareGroup 빌드
+  const groups = multiGroups.map(entries => {
+    // 대표 시료명 (재실험 접미사 없는 것 우선)
+    const baseName = entries.find(s => !isRetestBySuffix(s.sample_name ?? ''))?.sample_name
+      ?? normalizeNameForGroup(entries[0].sample_name ?? entries[0].sample_id ?? '')
+
+    const testItems = [...new Set(entries.map(e => e.test_item).filter(Boolean))] as string[]
+    const companies = [...new Set(entries.map(e => e.project_name).filter(Boolean))] as string[]
+    const has_retest = entries.some(s => s.is_retest || isRetestBySuffix(s.sample_name ?? ''))
+    const has_company = companies.length > 1
+
+    // 시험항목별 원본/재실험 분류
+    const retest_table = testItems.map(ti => {
+      const tiEntries = entries
+        .filter(e => e.test_item === ti)
+        .sort((a, b) => (a.analysis_date ?? '').localeCompare(b.analysis_date ?? ''))
+
+      const originals = tiEntries.filter(s => !s.is_retest && !isRetestBySuffix(s.sample_name ?? ''))
+      const retests = tiEntries.filter(s => s.is_retest || isRetestBySuffix(s.sample_name ?? ''))
+
+      // 원본이 없으면 가장 오래된 것을 원본으로
+      const originalSample = originals[0] ?? tiEntries[0] ?? null
+      const retestSamples = originals.length > 0
+        ? [...retests, ...originals.slice(1)]
+        : tiEntries.slice(1)
+
+      const originalVal = originalSample?.result_value ?? null
+      return {
+        test_item: ti,
+        original: originalSample ? buildRetestEntry(originalSample) : null,
+        retests: retestSamples.map(s => buildRetestEntry(s, originalVal)),
+      }
+    })
+
+    // 업체 비교 매트릭스
+    const matrix = testItems.map(ti => {
+      const values: Record<string, { result?: string; unit?: string; receipt_number?: string; receipt_date?: string; analysis_date?: string; id: number; is_retest?: boolean }> = {}
+      for (const co of companies) {
+        const e = entries.find(s => s.test_item === ti && s.project_name === co)
+        if (e) values[co] = { result: e.result_value, unit: e.unit, id: e.id, analysis_date: e.analysis_date, is_retest: e.is_retest }
+      }
+      return { test_item: ti, values }
+    })
+
+    return { sample_name: baseName, entries, companies, matrix, retest_table, has_retest, has_company }
+  })
+
+  return { mode: 'compare' as const, groups, samples }
+}
+
 // ── 파일 업로드 (Excel 파싱 + Supabase 저장) ─────────────────────────────────
 
 import type { UploadResult } from '../api/types'

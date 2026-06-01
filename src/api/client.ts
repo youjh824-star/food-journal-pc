@@ -4,7 +4,7 @@
  */
 import {
   sbGetWorklogs, sbCreateWorklog, sbUpdateWorklog, sbDeleteWorklog,
-  sbGetSamples, sbGetSampleTestItems, sbDeleteAllSamples,
+  sbGetSamples, sbGetSampleTestItems, sbDeleteAllSamples, sbSampleCompare,
   sbUploadFile,
   sbGetEquipment, sbCreateEquipment, sbUpdateEquipment, sbDeleteEquipment,
   sbGetEquipmentIssues, sbCreateEquipmentIssue, sbUpdateEquipmentIssue, sbDeleteEquipmentIssue,
@@ -37,12 +37,7 @@ export const api = {
 
   samples: sbGetSamples,
   sampleTestItems: sbGetSampleTestItems,
-  sampleCompare: async (search: string, testItem?: string) => {
-    const params: Record<string, string> = { search }
-    if (testItem) params.test_item = testItem
-    const samples = await sbGetSamples(params)
-    return { mode: 'list' as const, groups: [], samples }
-  },
+  sampleCompare: sbSampleCompare,
 
   equipment: {
     list: sbGetEquipment,

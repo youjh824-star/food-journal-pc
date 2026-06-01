@@ -52,6 +52,21 @@ function TIEMapEditor({ equipment }: { equipment: Equipment[] }) {
     setMap(prev => { const next = { ...prev }; delete next[ti]; return next; });
   };
 
+  const updateTestItem = (oldTi: string, newTi: string) => {
+    if (!newTi.trim() || newTi === oldTi) return;
+    setMap(prev => {
+      const next: TIEMap = {};
+      for (const [k, v] of Object.entries(prev)) {
+        next[k === oldTi ? newTi.trim() : k] = v;
+      }
+      return next;
+    });
+  };
+
+  const updateEquipment = (ti: string, eq: string) => {
+    setMap(prev => ({ ...prev, [ti]: eq }));
+  };
+
   const eqNames = equipment.map(e => e.name);
 
   return (
@@ -61,20 +76,29 @@ function TIEMapEditor({ equipment }: { equipment: Equipment[] }) {
         <p className="text-xs text-slate-lab">업로드 시 장비 미선택인 경우 자동 적용</p>
       </div>
 
+      {Object.keys(map).length === 0 && (
+        <p className="text-xs text-slate-lab py-2">아래에서 시험항목과 장비를 추가하세요.</p>
+      )}
+
       <div className="space-y-2">
         {Object.entries(map).map(([ti, eq]) => (
           <div key={ti} className="flex items-center gap-2">
-            <span className="flex-1 text-sm text-white bg-navy-900/60 rounded px-3 py-1.5">{ti}</span>
-            <span className="text-slate-lab text-xs">→</span>
+            <input
+              className="input-field flex-1 text-sm"
+              defaultValue={ti}
+              onBlur={e => updateTestItem(ti, e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+            />
+            <span className="text-slate-lab text-xs flex-shrink-0">→</span>
             <select
               className="input-field flex-1 text-sm"
               value={eq}
-              onChange={e => setMap(prev => ({ ...prev, [ti]: e.target.value }))}
+              onChange={e => updateEquipment(ti, e.target.value)}
             >
               {eqNames.map(n => <option key={n} value={n}>{n}</option>)}
               {!eqNames.includes(eq) && <option value={eq}>{eq}</option>}
             </select>
-            <button onClick={() => removeRow(ti)} className="text-red-400 hover:text-red-300 p-1">
+            <button onClick={() => removeRow(ti)} className="text-red-400 hover:text-red-300 p-1 flex-shrink-0">
               <Trash2 className="w-4 h-4" />
             </button>
           </div>

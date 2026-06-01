@@ -135,6 +135,18 @@ export interface Statistics {
   by_equipment: { name: string; value: number }[];
   by_test_item: { name: string; value: number }[];
   by_project: { name: string; value: number }[];
+  test_item_equipment: { test_item: string; equipment: string; count: number }[];
+}
+
+export interface ReportData {
+  period: { start: string; end: string; label: string };
+  summary: { total_samples: number; total_logs: number; test_item_count: number; project_count: number };
+  by_test_item: { name: string; value: number }[];
+  by_equipment: { name: string; value: number }[];
+  by_project: { name: string; value: number }[];
+  test_item_equipment: { test_item: string; equipment: string; count: number }[];
+  daily: { name: string; value: number }[];
+  generated_at: string;
 }
 
 export interface UploadResult {

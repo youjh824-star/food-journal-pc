@@ -5,7 +5,7 @@
 import {
   sbGetWorklogs, sbCreateWorklog, sbUpdateWorklog, sbDeleteWorklog,
   sbGetSamples, sbGetSampleTestItems, sbDeleteAllSamples, sbSampleCompare,
-  sbUploadFile,
+  sbUploadFile, sbGetReportData,
   sbGetEquipment, sbCreateEquipment, sbUpdateEquipment, sbDeleteEquipment,
   sbGetEquipmentIssues, sbCreateEquipmentIssue, sbUpdateEquipmentIssue, sbDeleteEquipmentIssue,
   sbGetReagents, sbCreateReagent, sbUpdateReagent, sbDeleteReagent,
@@ -58,6 +58,7 @@ export const api = {
   },
 
   statistics: sbGetStatistics,
+  reportData: sbGetReportData,
 
   reportUrl: (_type: string, _format: string) => '#',
   reports: {

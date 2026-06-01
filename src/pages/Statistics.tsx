@@ -8,6 +8,7 @@ import {
   chartMargin, chartTick, chartTooltipStyle, coloredBar, coloredDot, coloredActiveDot,
   normalizeChartData,
 } from '../utils/chartColors';
+import clsx from 'clsx';
 
 export default function StatisticsPage() {
   const [stats, setStats] = useState<Statistics | null>(null);
@@ -30,6 +31,16 @@ export default function StatisticsPage() {
   const byEquipment = normalizeChartData(stats.by_equipment);
   const byTestItem = normalizeChartData(stats.by_test_item);
   const byProject = normalizeChartData(stats.by_project);
+
+  // 시험항목 × 장비 매핑 테이블 구성
+  const tieData = stats.test_item_equipment ?? [];
+  const tieTestItems = [...new Set(tieData.map(r => r.test_item))];
+  const tieEquipments = [...new Set(tieData.map(r => r.equipment))];
+  const tieMatrix: Record<string, Record<string, number>> = {};
+  for (const r of tieData) {
+    if (!tieMatrix[r.test_item]) tieMatrix[r.test_item] = {};
+    tieMatrix[r.test_item][r.equipment] = r.count;
+  }
 
   return (
     <div>
@@ -115,6 +126,53 @@ export default function StatisticsPage() {
           </ResponsiveContainer>
         </div>
       </div>
+
+      {/* 시험항목 × 장비 매핑 테이블 */}
+      {tieTestItems.length > 0 && (
+        <div className="card mt-6">
+          <h3 className="text-sm font-medium text-slate-light mb-4">시험항목별 사용 장비</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-navy-600">
+                  <th className="text-left px-3 py-2 text-xs text-slate-lab font-medium">시험항목</th>
+                  {tieEquipments.map(eq => (
+                    <th key={eq} className="text-left px-3 py-2 text-xs text-slate-lab font-medium whitespace-nowrap">{eq}</th>
+                  ))}
+                  <th className="text-left px-3 py-2 text-xs text-slate-lab font-medium">합계</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tieTestItems.map((ti, i) => {
+                  const row = tieMatrix[ti] ?? {};
+                  const total = Object.values(row).reduce((s, v) => s + v, 0);
+                  const maxEq = Object.entries(row).sort((a, b) => b[1] - a[1])[0]?.[0];
+                  return (
+                    <tr key={ti} className={clsx('border-t border-navy-800', i % 2 === 0 ? 'bg-navy-900/30' : '')}>
+                      <td className="px-3 py-2 font-medium text-white whitespace-nowrap">{ti}</td>
+                      {tieEquipments.map(eq => (
+                        <td key={eq} className="px-3 py-2 font-mono">
+                          {row[eq] ? (
+                            <span className={clsx(
+                              'px-2 py-0.5 rounded text-xs font-medium',
+                              eq === maxEq ? 'bg-accent/20 text-accent-light' : 'text-slate-light',
+                            )}>
+                              {row[eq]}건
+                            </span>
+                          ) : (
+                            <span className="text-slate-700">-</span>
+                          )}
+                        </td>
+                      ))}
+                      <td className="px-3 py-2 font-mono text-xs text-slate-light font-semibold">{total}건</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

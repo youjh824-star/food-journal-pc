@@ -705,79 +705,144 @@ export async function sbGetDashboardCalendar(params: { start_date: string; end_d
 
 // ── 통계 ─────────────────────────────────────────────────────────────────────
 
-export async function sbGetStatistics(params?: Record<string, string>): Promise<Statistics> {
-  const days = parseInt(params?.days ?? '30')
-  const startDate = daysAgo(days)
-
-  const { data: worklogsData } = await supabase.from('work_logs')
-    .select('log_date, sample_count, workload')
-    .gte('log_date', startDate)
-    .order('log_date')
-
-  const { data: samplesData } = await supabase.from('samples')
-    .select('analysis_date, test_item, project_name, sample_id, equipment_id')
-    .gte('analysis_date', startDate)
-
-  // 일간
+function buildStatsFromLogs(
+  worklogsData: { log_date: string; sample_count: number; workload: number; test_item?: string; equipment_name?: string }[],
+  samplesData: { analysis_date?: string; test_item?: string; project_name?: string }[],
+  days: number,
+) {
+  // 일간 (로컬 날짜 기준)
   const dayMap = new Map<string, number>()
   for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10)
-    dayMap.set(d, 0)
+    dayMap.set(daysAgo(i), 0)
   }
-  for (const r of worklogsData ?? []) {
+  for (const r of worklogsData) {
     const d = String(r.log_date).slice(0, 10)
-    dayMap.set(d, (dayMap.get(d) ?? 0) + (r.workload ?? r.sample_count ?? 0))
+    if (dayMap.has(d)) dayMap.set(d, (dayMap.get(d) ?? 0) + (r.workload ?? r.sample_count ?? 0))
   }
   const daily = [...dayMap.entries()].map(([name, value]) => ({ name: name.slice(5), value }))
 
   // 주간
   const weekMap = new Map<string, number>()
-  for (const r of worklogsData ?? []) {
-    const d = new Date(String(r.log_date).slice(0, 10))
+  for (const r of worklogsData) {
+    const d = new Date(String(r.log_date).slice(0, 10) + 'T00:00:00')
     d.setDate(d.getDate() - d.getDay())
-    const w = d.toISOString().slice(0, 10)
+    const w = localDateStr(d)
     weekMap.set(w, (weekMap.get(w) ?? 0) + (r.workload ?? r.sample_count ?? 0))
   }
   const weekly = [...weekMap.entries()].sort().map(([k, value]) => ({ name: k.slice(5), value }))
 
-  // 월간 (최근 6개월)
+  // 월간
   const monthMap = new Map<string, number>()
-  for (const r of worklogsData ?? []) {
+  for (const r of worklogsData) {
     const m = String(r.log_date).slice(0, 7)
     monthMap.set(m, (monthMap.get(m) ?? 0) + (r.workload ?? r.sample_count ?? 0))
   }
   const monthly = [...monthMap.entries()].sort().map(([name, value]) => ({ name, value }))
 
-  // 샘플 기반 집계
+  // 시험항목별 (샘플 기준 — 더 세밀함)
   const testItemMap = new Map<string, number>()
-  const projectMap = new Map<string, number>()
-  for (const s of samplesData ?? []) {
+  for (const s of samplesData) {
     if (s.test_item) testItemMap.set(s.test_item, (testItemMap.get(s.test_item) ?? 0) + 1)
-    if (s.project_name) projectMap.set(s.project_name, (projectMap.get(s.project_name) ?? 0) + 1)
+  }
+  // 샘플 데이터 없으면 work_logs 기준으로 fallback
+  if (testItemMap.size === 0) {
+    for (const r of worklogsData) {
+      if (r.test_item) testItemMap.set(r.test_item, (testItemMap.get(r.test_item) ?? 0) + (r.workload ?? r.sample_count ?? 1))
+    }
   }
 
-  // 장비별 (장비 이름 조회)
-  const eqIds = [...new Set((samplesData ?? []).map(s => s.equipment_id).filter(Boolean))]
-  const eqMap = new Map<number, string>()
-  if (eqIds.length > 0) {
-    const { data: eqs } = await supabase.from('equipment').select('id,name').in('id', eqIds)
-    for (const eq of eqs ?? []) eqMap.set(eq.id, eq.name)
-  }
+  // 장비별 (work_logs.equipment_name 기준 — 샘플에는 equipment_id가 없음)
   const equipMap = new Map<string, number>()
-  for (const s of samplesData ?? []) {
-    const name = s.equipment_id ? (eqMap.get(s.equipment_id) ?? '기타') : '미배정'
-    equipMap.set(name, (equipMap.get(name) ?? 0) + 1)
+  for (const r of worklogsData) {
+    const name = r.equipment_name?.trim() || '미배정'
+    equipMap.set(name, (equipMap.get(name) ?? 0) + (r.workload ?? r.sample_count ?? 1))
+  }
+
+  // 시험항목 × 장비 매핑
+  type TIEKey = string
+  const tieMap = new Map<TIEKey, number>()
+  for (const r of worklogsData) {
+    if (!r.test_item) continue
+    const eq = r.equipment_name?.trim() || '미배정'
+    const key = `${r.test_item}||${eq}`
+    tieMap.set(key, (tieMap.get(key) ?? 0) + (r.workload ?? r.sample_count ?? 1))
+  }
+  const test_item_equipment = [...tieMap.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([key, count]) => {
+      const [test_item, equipment] = key.split('||')
+      return { test_item, equipment, count }
+    })
+
+  // 프로젝트별
+  const projectMap = new Map<string, number>()
+  for (const s of samplesData) {
+    if (s.project_name) projectMap.set(s.project_name, (projectMap.get(s.project_name) ?? 0) + 1)
   }
 
   const toArr = (m: Map<string, number>) =>
     [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([name, value]) => ({ name, value }))
 
+  return { daily, weekly, monthly, test_item_equipment, by_equipment: toArr(equipMap), by_test_item: toArr(testItemMap), by_project: toArr(projectMap) }
+}
+
+export async function sbGetStatistics(params?: Record<string, string>): Promise<Statistics> {
+  const days = parseInt(params?.days ?? '30')
+  const startDate = daysAgo(days)
+
+  const [wlRes, sRes] = await Promise.all([
+    supabase.from('work_logs')
+      .select('log_date, sample_count, workload, test_item, equipment_name')
+      .gte('log_date', startDate)
+      .order('log_date'),
+    supabase.from('samples')
+      .select('analysis_date, test_item, project_name')
+      .gte('analysis_date', startDate),
+  ])
+
+  return buildStatsFromLogs(
+    (wlRes.data ?? []) as { log_date: string; sample_count: number; workload: number; test_item?: string; equipment_name?: string }[],
+    (sRes.data ?? []) as { analysis_date?: string; test_item?: string; project_name?: string }[],
+    days,
+  )
+}
+
+// ── 보고서 데이터 ─────────────────────────────────────────────────────────────
+
+export async function sbGetReportData(startDate: string, endDate: string): Promise<import('../api/types').ReportData> {
+  const [wlRes, sRes] = await Promise.all([
+    supabase.from('work_logs')
+      .select('log_date, sample_count, workload, test_item, equipment_name')
+      .gte('log_date', startDate).lte('log_date', endDate)
+      .order('log_date'),
+    supabase.from('samples')
+      .select('analysis_date, test_item, project_name')
+      .gte('analysis_date', startDate).lte('analysis_date', endDate),
+  ])
+
+  const logs = (wlRes.data ?? []) as { log_date: string; sample_count: number; workload: number; test_item?: string; equipment_name?: string }[]
+  const samples = (sRes.data ?? []) as { analysis_date?: string; test_item?: string; project_name?: string }[]
+  const days = Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000) + 1
+
+  const stats = buildStatsFromLogs(logs, samples, days)
+  const totalSamples = samples.length || logs.reduce((s, r) => s + (r.workload ?? r.sample_count ?? 0), 0)
+
+  const projectSet = new Set(samples.map(s => s.project_name).filter(Boolean))
+  const testItemSet = new Set([...stats.by_test_item.map(t => t.name)])
+
   return {
-    daily,
-    weekly,
-    monthly,
-    by_equipment: toArr(equipMap),
-    by_test_item: toArr(testItemMap),
-    by_project: toArr(projectMap),
+    period: { start: startDate, end: endDate, label: `${startDate} ~ ${endDate}` },
+    summary: {
+      total_samples: totalSamples,
+      total_logs: logs.length,
+      test_item_count: testItemSet.size,
+      project_count: projectSet.size,
+    },
+    by_test_item: stats.by_test_item,
+    by_equipment: stats.by_equipment,
+    by_project: stats.by_project,
+    test_item_equipment: stats.test_item_equipment,
+    daily: stats.daily,
+    generated_at: new Date().toLocaleString('ko-KR'),
   }
 }

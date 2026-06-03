@@ -113,6 +113,14 @@ const HEADER_KEYWORDS = [
 
 // ── 유틸리티 함수 ─────────────────────────────────────────────────────────────
 
+/** Date → 'YYYY-MM-DD' (로컬 시간 기준 — toISOString()은 UTC라 KST와 하루 차이 날 수 있음) */
+function localDateOnly(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 function normalizeCol(col: string): string {
   return col.replace(/[\s_\-.]+/g, ' ').toLowerCase().trim()
 }
@@ -142,10 +150,10 @@ function isStatRow(sampleName?: string, sampleId?: string): boolean {
 
 function parseDate(value: unknown): string | null {
   if (value == null || value === '') return null
-  // cellDates:true 사용 시 JS Date 객체로 들어옴
+  // cellDates:true 사용 시 JS Date 객체로 들어옴 → 로컬 기준으로 변환
   if (value instanceof Date) {
     if (isNaN(value.getTime())) return null
-    return value.toISOString().slice(0, 10)
+    return localDateOnly(value)
   }
   if (typeof value === 'number') {
     // 혹시 날짜 직렬 숫자가 남아있는 경우 (fallback)
@@ -154,7 +162,7 @@ function parseDate(value: unknown): string | null {
       const excelEpoch = new Date(Date.UTC(1899, 11, 30))
       const d = new Date(excelEpoch.getTime() + value * 86400000)
       if (!isNaN(d.getTime()) && d.getFullYear() > 1900) {
-        return d.toISOString().slice(0, 10)
+        return localDateOnly(d)
       }
     } catch { /* 무시 */ }
     return null
@@ -171,7 +179,7 @@ function parseDate(value: unknown): string | null {
   try {
     const parsed = new Date(s)
     if (!isNaN(parsed.getTime())) {
-      return parsed.toISOString().slice(0, 10)
+      return localDateOnly(parsed)
     }
   } catch { /* 무시 */ }
   return null
@@ -442,7 +450,7 @@ function parseSheet(
     if (v == null) return ''
     if (v instanceof Date) {
       if (isNaN(v.getTime())) return ''
-      return v.toISOString().slice(0, 10)
+      return localDateOnly(v)  // 로컬 날짜 기준 (UTC 사용 시 KST와 하루 차이)
     }
     return String(v)
   }))

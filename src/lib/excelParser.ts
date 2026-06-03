@@ -113,12 +113,18 @@ const HEADER_KEYWORDS = [
 
 // ── 유틸리티 함수 ─────────────────────────────────────────────────────────────
 
-/** Date → 'YYYY-MM-DD' (로컬 시간 기준 — toISOString()은 UTC라 KST와 하루 차이 날 수 있음) */
-function localDateOnly(d: Date): string {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
+/**
+ * Excel Date → 'YYYY-MM-DD'
+ *
+ * SheetJS(cellDates:true)는 Excel 날짜를 UTC 기준 Date로 변환할 때
+ * KST(UTC+9) 환경에서 자정(00:00 KST)이 14:59 UTC로 들어오는 문제가 있음.
+ * 가장 가까운 UTC 자정으로 반올림하면 올바른 날짜를 복원할 수 있음.
+ * 예) 2026-05-31T14:59Z → round → 2026-06-01T00:00Z → '2026-06-01' ✓
+ */
+function excelDateToStr(d: Date): string {
+  const MS_PER_DAY = 86400000
+  const rounded = new Date(Math.round(d.getTime() / MS_PER_DAY) * MS_PER_DAY)
+  return rounded.toISOString().slice(0, 10)
 }
 
 function normalizeCol(col: string): string {
@@ -153,7 +159,7 @@ function parseDate(value: unknown): string | null {
   // cellDates:true 사용 시 JS Date 객체로 들어옴 → 로컬 기준으로 변환
   if (value instanceof Date) {
     if (isNaN(value.getTime())) return null
-    return localDateOnly(value)
+    return excelDateToStr(value)
   }
   if (typeof value === 'number') {
     // 혹시 날짜 직렬 숫자가 남아있는 경우 (fallback)
@@ -162,7 +168,7 @@ function parseDate(value: unknown): string | null {
       const excelEpoch = new Date(Date.UTC(1899, 11, 30))
       const d = new Date(excelEpoch.getTime() + value * 86400000)
       if (!isNaN(d.getTime()) && d.getFullYear() > 1900) {
-        return localDateOnly(d)
+        return excelDateToStr(d)
       }
     } catch { /* 무시 */ }
     return null
@@ -179,7 +185,7 @@ function parseDate(value: unknown): string | null {
   try {
     const parsed = new Date(s)
     if (!isNaN(parsed.getTime())) {
-      return localDateOnly(parsed)
+      return excelDateToStr(parsed)
     }
   } catch { /* 무시 */ }
   return null
@@ -450,7 +456,7 @@ function parseSheet(
     if (v == null) return ''
     if (v instanceof Date) {
       if (isNaN(v.getTime())) return ''
-      return localDateOnly(v)  // 로컬 날짜 기준 (UTC 사용 시 KST와 하루 차이)
+      return excelDateToStr(v)  // 로컬 날짜 기준 (UTC 사용 시 KST와 하루 차이)
     }
     return String(v)
   }))

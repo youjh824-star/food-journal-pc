@@ -320,7 +320,6 @@ function autoMapColumns(headers: string[]): Record<string, string> {
         fieldMapped = true
         break
       }
-      if (fieldMapped) break
     }
 
     if (!mapping.result_value && !fieldMapped) {

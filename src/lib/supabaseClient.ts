@@ -610,7 +610,9 @@ export async function sbGetDashboard(): Promise<DashboardData> {
     if (t.completed) return false
     if (t.schedule_type === 'daily') return true
     if (t.schedule_type === 'weekly' && t.recurrence_weekday === todayDow) return true
-    if (t.schedule_type === 'once') return true
+    if (t.schedule_type === 'monthly' && t.recurrence_day === new Date().getDate()) return true
+    // 일회성: 마감일이 없거나 오늘인 경우만 표시
+    if (t.schedule_type === 'once' || !t.schedule_type) return !t.due_date || t.due_date === td
     return false
   }).slice(0, 5)
 

@@ -104,8 +104,8 @@ function ViewerModal({
       await api.methods.convert(method.id);
       onConverted();
       setCfg({ mode: 'iframe', url: `${api.methods.viewUrl(method.id)}?t=${Date.now()}` });
-    } catch (e: any) {
-      setConvertErr(e.message || '변환 실패');
+    } catch (e: unknown) {
+      setConvertErr(e instanceof Error ? e.message : '변환 실패');
     } finally {
       setConverting(false);
     }

@@ -194,7 +194,8 @@ export default function TodosPage() {
   const load = () => api.todos.list().then(setItems).catch((e: unknown) => console.error('할일 로드 실패:', e));
   useEffect(() => { load(); }, []);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
 
   const filtered = items.filter((t) => {
     if (filter === 'today') return t.is_due_today;

@@ -407,46 +407,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Charts row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="card">
-          <h3 className="text-sm font-medium text-slate-light mb-4">주간 분석량</h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={data.week_trend || []}>
-              <XAxis dataKey="label" tick={chartTick} />
-              <YAxis tick={chartTick} />
-              <Tooltip contentStyle={chartTooltipStyle} />
-              <Line
-                type="monotone"
-                dataKey="samples"
-                stroke="#64748b"
-                strokeWidth={2}
-                dot={(props: unknown) => coloredDot(props as Record<string, unknown>)}
-                activeDot={(props: unknown) => coloredActiveDot(props as Record<string, unknown>)}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-
-        <div className="card">
-          <h3 className="text-sm font-medium text-slate-light mb-4">시험항목 Top 5</h3>
-          <ResponsiveContainer width="100%" height={200}>
-            {(() => {
-              const topItems = normalizeChartData(
-                data.top_test_items?.length ? data.top_test_items : [{ name: '-', value: 0 }],
-              );
-              return (
-            <BarChart data={topItems} layout="vertical">
-              <XAxis type="number" tick={chartTick} />
-              <YAxis type="category" dataKey="name" tick={chartTick} width={90} />
-              <Tooltip contentStyle={chartTooltipStyle} />
-              {coloredBar(topItems, [0, 4, 4, 0])}
-            </BarChart>
-              );
-            })()}
-          </ResponsiveContainer>
-        </div>
-      </div>
     </div>
   );
 }

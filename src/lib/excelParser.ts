@@ -439,6 +439,35 @@ function shouldSkipSheet(sheetName: string): boolean {
   return SKIP_SHEET_KEYWORDS.some(kw => low.includes(kw))
 }
 
+// ── 날짜 열 빈 셀 채우기 (위아래 이웃 값으로 보간) ──────────────────────────────
+
+/**
+ * 날짜 배열에서 null인 위치를 이웃 값으로 채운다.
+ * - 위에 값 있고 아래도 값 있음 → 위 값 사용 (같은 날짜 블록으로 간주)
+ * - 위만 있음 → 위 값으로 채움 (fill-down)
+ * - 아래만 있음 → 아래 값으로 채움 (fill-up, 파일 시작 부분)
+ */
+function fillDateGaps(dates: (string | null)[]): (string | null)[] {
+  const result = [...dates]
+  const n = result.length
+
+  // 1pass: fill-down (위 → 아래)
+  let last: string | null = null
+  for (let i = 0; i < n; i++) {
+    if (result[i]) { last = result[i] }
+    else if (last) { result[i] = last }
+  }
+
+  // 2pass: fill-up (아래 → 위) — 맨 앞 비어있는 경우
+  let next: string | null = null
+  for (let i = n - 1; i >= 0; i--) {
+    if (result[i]) { next = result[i] }
+    else if (next) { result[i] = next }
+  }
+
+  return result
+}
+
 // ── 단일 시트 파싱 (내부 헬퍼) ────────────────────────────────────────────────
 
 function parseSheet(
@@ -466,8 +495,21 @@ function parseSheet(
 
   console.log(`[parseSheet] 시트:${sheetName} 헤더행:${headerRowIdx} 매핑:`, JSON.stringify(mapping))
 
+  // 날짜 열 인덱스 찾기 → 빈 셀 보간
+  const dataRows = raw.slice(headerRowIdx + 1)
+  const analysisDateColIdx = mapping.analysis_date ? headers.indexOf(mapping.analysis_date) : -1
+  const receiptDateColIdx  = mapping.receipt_date  ? headers.indexOf(mapping.receipt_date)  : -1
+
+  const filledAnalysisDates = analysisDateColIdx >= 0
+    ? fillDateGaps(dataRows.map(r => parseDate(r[analysisDateColIdx] ?? null)))
+    : null
+  const filledReceiptDates = receiptDateColIdx >= 0
+    ? fillDateGaps(dataRows.map(r => parseDate(r[receiptDateColIdx] ?? null)))
+    : null
+
   const samples: ParsedSample[] = []
   for (let i = headerRowIdx + 1; i < raw.length; i++) {
+    const dataIdx = i - (headerRowIdx + 1)
     const rawRow = raw[i]
     const row: Record<string, unknown> = {}
     for (let j = 0; j < headers.length; j++) {
@@ -493,14 +535,16 @@ function parseSheet(
       unit = String(row[mapping.unit] ?? '').trim() || undefined
     }
 
-    let analysisDate: string | null = null
-    let receiptDate: string | null = null
-    try {
-      const analysisDateRaw = mapping.analysis_date ? raw[i][headers.indexOf(mapping.analysis_date)] : null
-      const receiptDateRaw = mapping.receipt_date ? raw[i][headers.indexOf(mapping.receipt_date)] : null
-      analysisDate = parseDate(analysisDateRaw)
-      receiptDate = parseDate(receiptDateRaw)
-    } catch { /* 무시 */ }
+    // 보간된 날짜 사용 (빈 셀은 위아래 이웃 값으로 채워진 상태)
+    let analysisDate = filledAnalysisDates ? filledAnalysisDates[dataIdx] : null
+    let receiptDate  = filledReceiptDates  ? filledReceiptDates[dataIdx]  : null
+    // 날짜 열이 매핑되지 않은 경우 원본 셀에서 직접 파싱
+    if (!filledAnalysisDates) {
+      try { analysisDate = parseDate(rawRow[analysisDateColIdx] ?? null) } catch { /* 무시 */ }
+    }
+    if (!filledReceiptDates) {
+      try { receiptDate = parseDate(rawRow[receiptDateColIdx] ?? null) } catch { /* 무시 */ }
+    }
 
     const projectNameCol = mapping.project_name
     const projectName = projectNameCol ? String(row[projectNameCol] ?? '').trim() || undefined : undefined

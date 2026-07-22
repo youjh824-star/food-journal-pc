@@ -627,11 +627,24 @@ export async function sbGetDashboard(): Promise<DashboardData> {
 
   // 오늘 할일
   const allTodos = (todos.data ?? []) as unknown as Todo[]
+  const nowDate = new Date()
+  const nowMon = nowDate.getMonth() + 1
+  const nowDay = nowDate.getDate()
   const todayTodos = allTodos.filter(t => {
     if (t.completed) return false
     if (t.schedule_type === 'daily') return true
     if (t.schedule_type === 'weekly' && t.recurrence_weekday === todayDow) return true
-    if (t.schedule_type === 'monthly' && t.recurrence_day === new Date().getDate()) return true
+    if (t.schedule_type === 'monthly' && t.recurrence_day === nowDay) return true
+    const extra = t as unknown as Record<string, unknown>
+    if (t.schedule_type === 'annual') {
+      return (extra.recurrence_month as number) === nowMon && t.recurrence_day === nowDay
+    }
+    if (t.schedule_type === 'semiannual') {
+      const m = extra.recurrence_month as number
+      // 지정 월 또는 6개월 후 (mod 12)
+      const m2 = m > 6 ? m - 6 : m + 6
+      return (nowMon === m || nowMon === m2) && t.recurrence_day === nowDay
+    }
     // 일회성: 마감일이 없거나 오늘인 경우만 표시
     if (t.schedule_type === 'once' || !t.schedule_type) return !t.due_date || t.due_date === td
     return false

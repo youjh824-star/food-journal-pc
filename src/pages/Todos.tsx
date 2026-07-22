@@ -4,7 +4,7 @@ import { PageHeader, Badge } from '../components/UI';
 import { Plus, Trash2, Pencil, X, Check, Calendar, Repeat } from 'lucide-react';
 import clsx from 'clsx';
 
-type ScheduleType = 'once' | 'daily' | 'weekly' | 'monthly';
+type ScheduleType = 'once' | 'daily' | 'weekly' | 'monthly' | 'semiannual' | 'annual';
 
 type TodoForm = {
   title: string;
@@ -15,11 +15,13 @@ type TodoForm = {
   priority: string;
   recurrence_weekday: number;
   recurrence_day: number;
+  recurrence_month: number;
 };
 
 const PRIORITY_LABEL: Record<string, string> = { high: '높음', normal: '보통', low: '낮음' };
 const SCHEDULE_LABEL: Record<string, string> = {
   once: '일회성', daily: '매일', weekly: '매주', monthly: '매월',
+  semiannual: '반년주기', annual: '일년주기',
 };
 const WEEKDAYS = ['월', '화', '수', '목', '금', '토', '일'];
 
@@ -28,6 +30,7 @@ const emptyForm = (): TodoForm => ({
   due_date: '', start_date: '', priority: 'normal',
   recurrence_weekday: new Date().getDay() === 0 ? 6 : new Date().getDay() - 1,
   recurrence_day: new Date().getDate(),
+  recurrence_month: new Date().getMonth() + 1,
 });
 
 function todoToForm(t: Todo): TodoForm {
@@ -40,10 +43,12 @@ function todoToForm(t: Todo): TodoForm {
     priority: t.priority ?? 'normal',
     recurrence_weekday: t.recurrence_weekday ?? 0,
     recurrence_day: t.recurrence_day ?? 1,
+    recurrence_month: (t as unknown as Record<string, unknown>).recurrence_month as number ?? new Date().getMonth() + 1,
   };
 }
 
 function formToPayload(form: TodoForm) {
+  const isPeriodic = ['semiannual', 'annual'].includes(form.schedule_type);
   return {
     title: form.title,
     description: form.description || undefined,
@@ -52,16 +57,20 @@ function formToPayload(form: TodoForm) {
     start_date: form.start_date || undefined,
     priority: form.priority,
     recurrence_weekday: form.schedule_type === 'weekly' ? form.recurrence_weekday : undefined,
-    recurrence_day: form.schedule_type === 'monthly' ? form.recurrence_day : undefined,
+    recurrence_day: (form.schedule_type === 'monthly' || isPeriodic) ? form.recurrence_day : undefined,
+    recurrence_month: isPeriodic ? form.recurrence_month : undefined,
   };
 }
 
 function scheduleSummary(t: Todo): string {
   const st = t.schedule_type ?? 'once';
+  const extra = t as unknown as Record<string, unknown>;
   if (st === 'once') return t.due_date ? `마감 ${t.due_date}` : '마감일 없음';
   if (st === 'daily') return '매일';
   if (st === 'weekly') return `매주 ${WEEKDAYS[t.recurrence_weekday ?? 0]}요일`;
   if (st === 'monthly') return `매월 ${t.recurrence_day ?? 1}일`;
+  if (st === 'semiannual') return `반년주기 · ${extra.recurrence_month ?? '?'}월 ${t.recurrence_day ?? 1}일`;
+  if (st === 'annual') return `매년 ${extra.recurrence_month ?? '?'}월 ${t.recurrence_day ?? 1}일`;
   return st;
 }
 
@@ -86,6 +95,8 @@ function TodoFormFields({
           <option value="daily">매일</option>
           <option value="weekly">매주</option>
           <option value="monthly">매월</option>
+          <option value="semiannual">반년주기</option>
+          <option value="annual">일년주기</option>
         </select>
       </div>
 
@@ -118,6 +129,19 @@ function TodoFormFields({
         <div>
           <label className="text-xs text-slate-light block mb-1">매월 일자</label>
           <input type="number" min={1} max={31} className="input-field w-full" value={form.recurrence_day} onChange={(e) => onChange({ ...form, recurrence_day: Number(e.target.value) })} />
+        </div>
+      )}
+
+      {(form.schedule_type === 'semiannual' || form.schedule_type === 'annual') && (
+        <div className="flex gap-2">
+          <div className="flex-1">
+            <label className="text-xs text-slate-light block mb-1">월</label>
+            <input type="number" min={1} max={12} className="input-field w-full" value={form.recurrence_month} onChange={(e) => onChange({ ...form, recurrence_month: Number(e.target.value) })} />
+          </div>
+          <div className="flex-1">
+            <label className="text-xs text-slate-light block mb-1">일</label>
+            <input type="number" min={1} max={31} className="input-field w-full" value={form.recurrence_day} onChange={(e) => onChange({ ...form, recurrence_day: Number(e.target.value) })} />
+          </div>
         </div>
       )}
 

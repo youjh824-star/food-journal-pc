@@ -74,44 +74,66 @@ function adjustToWorkday(d: Date): Date {
   return result
 }
 
+// 두 날짜 문자열 비교 ('YYYY-MM-DD')
+function dateStrGte(a: string, b: string): boolean { return a >= b }
+
 // 시작일 + 주기 설정으로 다음 예정일 계산 (조정 전 날짜와 조정 후 날짜 모두 반환)
 function calculateNextDue(form: TodoForm): { date: string; adjusted: boolean } {
-  const base = form.start_date ? new Date(form.start_date + 'T00:00:00') : new Date()
+  const baseStr = form.start_date || toDateStr(new Date())
 
-  let target: Date
+  let rawStr: string
 
   if (form.schedule_type === 'once' || form.schedule_type === 'daily') {
-    target = base
+    rawStr = baseStr
+
   } else if (form.schedule_type === 'weekly') {
-    // recurrence_weekday: 0=월 ~ 6=일, JS getDay: 0=일 1=월 ... 6=토
+    // recurrence_weekday: 0=월 ~ 6=일 / JS getDay: 0=일 1=월 ... 6=토
+    const base = new Date(baseStr + 'T00:00:00')
     const jsDow = form.recurrence_weekday === 6 ? 0 : form.recurrence_weekday + 1
-    target = new Date(base)
-    const diff = (jsDow - target.getDay() + 7) % 7
-    target.setDate(target.getDate() + (diff === 0 ? 0 : diff))
+    const diff = (jsDow - base.getDay() + 7) % 7
+    base.setDate(base.getDate() + diff)
+    rawStr = toDateStr(base)
+
   } else if (form.schedule_type === 'monthly') {
-    target = new Date(base.getFullYear(), base.getMonth(), form.recurrence_day)
-    if (target < base) target.setMonth(target.getMonth() + 1)
-  } else if (form.schedule_type === 'semiannual') {
-    const m = form.recurrence_month - 1 // 0-indexed
-    const d = form.recurrence_day
-    // 지정 월/일 기준으로 6개월 간격 후보 생성 (최대 2년치)
-    const candidates: Date[] = []
-    for (let year = base.getFullYear() - 1; year <= base.getFullYear() + 2; year++) {
-      candidates.push(new Date(year, m, d))
-      candidates.push(new Date(year, m + 6, d)) // JS Date가 month > 11 이면 자동으로 다음 해로 처리
+    // 시작월의 지정일 → 지났으면 다음 달
+    const base = new Date(baseStr + 'T00:00:00')
+    let y = base.getFullYear(), mo = base.getMonth()
+    let candidate = toDateStr(new Date(y, mo, form.recurrence_day))
+    if (!dateStrGte(candidate, baseStr)) {
+      mo++; if (mo > 11) { mo = 0; y++ }
+      candidate = toDateStr(new Date(y, mo, form.recurrence_day))
     }
-    const future = candidates.filter(c => c >= base).sort((a, b) => a.getTime() - b.getTime())
-    target = future[0] ?? new Date(base.getFullYear(), m, d)
+    rawStr = candidate
+
+  } else if (form.schedule_type === 'semiannual') {
+    // 두 기준월: recurrence_month 와 그로부터 6개월 후 (1-indexed, 1~12)
+    const m1 = form.recurrence_month                         // 1-indexed
+    const m2 = m1 <= 6 ? m1 + 6 : m1 - 6                   // 반대쪽 6개월
+    const d  = form.recurrence_day
+    // 충분한 후보 생성 (현재 연도 ±1)
+    const baseYear = parseInt(baseStr.slice(0, 4), 10)
+    const candidates: string[] = []
+    for (let y = baseYear - 1; y <= baseYear + 2; y++) {
+      candidates.push(toDateStr(new Date(y, m1 - 1, d)))
+      candidates.push(toDateStr(new Date(y, m2 - 1, d)))
+    }
+    const future = candidates.filter(c => dateStrGte(c, baseStr)).sort()
+    rawStr = future[0] ?? toDateStr(new Date(baseYear + 1, m1 - 1, d))
+
   } else { // annual
-    const m = form.recurrence_month - 1
+    const m = form.recurrence_month  // 1-indexed
     const d = form.recurrence_day
-    target = new Date(base.getFullYear(), m, d)
-    if (target < base) target.setFullYear(target.getFullYear() + 1)
+    const baseYear = parseInt(baseStr.slice(0, 4), 10)
+    let candidate = toDateStr(new Date(baseYear, m - 1, d))
+    if (!dateStrGte(candidate, baseStr)) {
+      candidate = toDateStr(new Date(baseYear + 1, m - 1, d))
+    }
+    rawStr = candidate
   }
 
-  const raw = toDateStr(target)
-  const worked = adjustToWorkday(target)
-  return { date: toDateStr(worked), adjusted: toDateStr(worked) !== raw }
+  const worked = adjustToWorkday(new Date(rawStr + 'T00:00:00'))
+  const workedStr = toDateStr(worked)
+  return { date: workedStr, adjusted: workedStr !== rawStr }
 }
 
 const emptyForm = (): TodoForm => ({

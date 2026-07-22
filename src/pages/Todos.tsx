@@ -106,29 +106,16 @@ function calculateNextDue(form: TodoForm): { date: string; adjusted: boolean } {
     rawStr = candidate
 
   } else if (form.schedule_type === 'semiannual') {
-    // 두 기준월: recurrence_month 와 그로부터 6개월 후 (1-indexed, 1~12)
-    const m1 = form.recurrence_month                         // 1-indexed
-    const m2 = m1 <= 6 ? m1 + 6 : m1 - 6                   // 반대쪽 6개월
-    const d  = form.recurrence_day
-    // 충분한 후보 생성 (현재 연도 ±1)
-    const baseYear = parseInt(baseStr.slice(0, 4), 10)
-    const candidates: string[] = []
-    for (let y = baseYear - 1; y <= baseYear + 2; y++) {
-      candidates.push(toDateStr(new Date(y, m1 - 1, d)))
-      candidates.push(toDateStr(new Date(y, m2 - 1, d)))
-    }
-    const future = candidates.filter(c => dateStrGte(c, baseStr)).sort()
-    rawStr = future[0] ?? toDateStr(new Date(baseYear + 1, m1 - 1, d))
+    // 시작일 + 6개월
+    const base = new Date(baseStr + 'T00:00:00')
+    base.setMonth(base.getMonth() + 6)
+    rawStr = toDateStr(base)
 
   } else { // annual
-    const m = form.recurrence_month  // 1-indexed
-    const d = form.recurrence_day
-    const baseYear = parseInt(baseStr.slice(0, 4), 10)
-    let candidate = toDateStr(new Date(baseYear, m - 1, d))
-    if (!dateStrGte(candidate, baseStr)) {
-      candidate = toDateStr(new Date(baseYear + 1, m - 1, d))
-    }
-    rawStr = candidate
+    // 시작일 + 1년
+    const base = new Date(baseStr + 'T00:00:00')
+    base.setFullYear(base.getFullYear() + 1)
+    rawStr = toDateStr(base)
   }
 
   const worked = adjustToWorkday(new Date(rawStr + 'T00:00:00'))
@@ -186,14 +173,8 @@ function scheduleSummary(t: Todo): string {
     const base = `매월 ${t.recurrence_day ?? 1}일`
     return t.due_date ? `${base} · 다음 ${t.due_date}` : base
   }
-  if (st === 'semiannual') {
-    const base = `반년주기 · ${extra.recurrence_month ?? '?'}월 ${t.recurrence_day ?? 1}일`
-    return t.due_date ? `${base} · 다음 ${t.due_date}` : base
-  }
-  if (st === 'annual') {
-    const base = `매년 ${extra.recurrence_month ?? '?'}월 ${t.recurrence_day ?? 1}일`
-    return t.due_date ? `${base} · 다음 ${t.due_date}` : base
-  }
+  if (st === 'semiannual') return t.due_date ? `반년주기 · 다음 ${t.due_date}` : '반년주기'
+  if (st === 'annual') return t.due_date ? `일년주기 · 다음 ${t.due_date}` : '일년주기'
   return st;
 }
 
@@ -266,20 +247,6 @@ function TodoFormFields({
         </div>
       )}
 
-      {(form.schedule_type === 'semiannual' || form.schedule_type === 'annual') && (
-        <div className="flex gap-2">
-          <div className="flex-1">
-            <label className="text-xs text-slate-light block mb-1">월</label>
-            <input type="number" min={1} max={12} className="input-field w-full" value={form.recurrence_month}
-              onChange={(e) => handleRecurrenceChange({ ...form, recurrence_month: Number(e.target.value) })} />
-          </div>
-          <div className="flex-1">
-            <label className="text-xs text-slate-light block mb-1">일</label>
-            <input type="number" min={1} max={31} className="input-field w-full" value={form.recurrence_day}
-              onChange={(e) => handleRecurrenceChange({ ...form, recurrence_day: Number(e.target.value) })} />
-          </div>
-        </div>
-      )}
 
       {/* 시작일 — once 포함 모든 유형 */}
       <div>

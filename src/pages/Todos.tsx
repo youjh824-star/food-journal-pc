@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, Todo } from '../api/client';
 import { PageHeader, Badge } from '../components/UI';
-import { Plus, Trash2, Pencil, X, Check, Calendar, Repeat } from 'lucide-react';
+import { Plus, Trash2, Pencil, X, Check, Calendar, Repeat, Wand2 } from 'lucide-react';
 import clsx from 'clsx';
 
 type ScheduleType = 'once' | 'daily' | 'weekly' | 'monthly' | 'semiannual' | 'annual';
@@ -24,6 +24,94 @@ const SCHEDULE_LABEL: Record<string, string> = {
   semiannual: '반년주기', annual: '일년주기',
 };
 const WEEKDAYS = ['월', '화', '수', '목', '금', '토', '일'];
+
+// ── 한국 공휴일 (2024-2027) ────────────────────────────────────────────────────
+// 고정 공휴일 + 설날/추석/부처님오신날 (음력 → 양력 변환 결과)
+const KR_HOLIDAYS = new Set<string>([
+  // 고정 공휴일 (매년 반복 — YYYY-MM-DD 형식으로 각 연도 추가)
+  ...([2024, 2025, 2026, 2027].flatMap(y => [
+    `${y}-01-01`, // 신정
+    `${y}-03-01`, // 삼일절
+    `${y}-05-05`, // 어린이날
+    `${y}-06-06`, // 현충일
+    `${y}-08-15`, // 광복절
+    `${y}-10-03`, // 개천절
+    `${y}-10-09`, // 한글날
+    `${y}-12-25`, // 성탄절
+  ])),
+  // 설날 연휴 (음력 1/1 전후)
+  '2024-02-09', '2024-02-10', '2024-02-11', '2024-02-12',
+  '2025-01-28', '2025-01-29', '2025-01-30',
+  '2026-02-16', '2026-02-17', '2026-02-18',
+  '2027-02-06', '2027-02-07', '2027-02-08',
+  // 추석 연휴 (음력 8/15 전후)
+  '2024-09-16', '2024-09-17', '2024-09-18',
+  '2025-10-05', '2025-10-06', '2025-10-07',
+  '2026-09-24', '2026-09-25', '2026-09-26',
+  '2027-10-14', '2027-10-15', '2027-10-16',
+  // 부처님오신날
+  '2024-05-15',
+  '2025-05-05', // 어린이날과 겹침
+  '2026-05-24',
+  '2027-05-13',
+])
+
+function toDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function isHoliday(d: Date): boolean {
+  const dow = d.getDay() // 0=일, 6=토
+  return dow === 0 || dow === 6 || KR_HOLIDAYS.has(toDateStr(d))
+}
+
+// 주말/공휴일이면 이전 업무일로 이동
+function adjustToWorkday(d: Date): Date {
+  const result = new Date(d)
+  while (isHoliday(result)) {
+    result.setDate(result.getDate() - 1)
+  }
+  return result
+}
+
+// 시작일 + 주기 설정으로 다음 예정일 계산
+function calculateNextDue(form: TodoForm): string {
+  const base = form.start_date ? new Date(form.start_date + 'T00:00:00') : new Date()
+
+  let target: Date
+
+  if (form.schedule_type === 'once') {
+    target = base
+  } else if (form.schedule_type === 'daily') {
+    target = base
+  } else if (form.schedule_type === 'weekly') {
+    // recurrence_weekday: 0=월 ~ 6=일, JS getDay: 0=일 1=월 ... 6=토
+    const jsDow = form.recurrence_weekday === 6 ? 0 : form.recurrence_weekday + 1
+    target = new Date(base)
+    const diff = (jsDow - target.getDay() + 7) % 7
+    target.setDate(target.getDate() + diff)
+  } else if (form.schedule_type === 'monthly') {
+    target = new Date(base.getFullYear(), base.getMonth(), form.recurrence_day)
+    if (target < base) target.setMonth(target.getMonth() + 1)
+  } else if (form.schedule_type === 'semiannual') {
+    const m = form.recurrence_month - 1 // 0-indexed
+    const d = form.recurrence_day
+    // 올해 지정 월, 6개월 후 중 base 이후 가장 가까운 날
+    const candidates = [
+      new Date(base.getFullYear(), m, d),
+      new Date(base.getFullYear(), m + 6, d),
+      new Date(base.getFullYear() + 1, m, d),
+    ]
+    target = candidates.filter(c => c >= base).sort((a, b) => a.getTime() - b.getTime())[0] ?? candidates[0]
+  } else { // annual
+    const m = form.recurrence_month - 1
+    const d = form.recurrence_day
+    target = new Date(base.getFullYear(), m, d)
+    if (target < base) target.setFullYear(target.getFullYear() + 1)
+  }
+
+  return toDateStr(adjustToWorkday(target))
+}
 
 const emptyForm = (): TodoForm => ({
   title: '', description: '', schedule_type: 'once',
@@ -53,7 +141,7 @@ function formToPayload(form: TodoForm) {
     title: form.title,
     description: form.description || undefined,
     schedule_type: form.schedule_type,
-    due_date: form.schedule_type === 'once' && form.due_date ? form.due_date : undefined,
+    due_date: form.due_date || undefined,
     start_date: form.start_date || undefined,
     priority: form.priority,
     recurrence_weekday: form.schedule_type === 'weekly' ? form.recurrence_weekday : undefined,
@@ -66,11 +154,23 @@ function scheduleSummary(t: Todo): string {
   const st = t.schedule_type ?? 'once';
   const extra = t as unknown as Record<string, unknown>;
   if (st === 'once') return t.due_date ? `마감 ${t.due_date}` : '마감일 없음';
-  if (st === 'daily') return '매일';
-  if (st === 'weekly') return `매주 ${WEEKDAYS[t.recurrence_weekday ?? 0]}요일`;
-  if (st === 'monthly') return `매월 ${t.recurrence_day ?? 1}일`;
-  if (st === 'semiannual') return `반년주기 · ${extra.recurrence_month ?? '?'}월 ${t.recurrence_day ?? 1}일`;
-  if (st === 'annual') return `매년 ${extra.recurrence_month ?? '?'}월 ${t.recurrence_day ?? 1}일`;
+  if (st === 'daily') return t.due_date ? `매일 · 다음 ${t.due_date}` : '매일';
+  if (st === 'weekly') {
+    const base = `매주 ${WEEKDAYS[t.recurrence_weekday ?? 0]}요일`
+    return t.due_date ? `${base} · 다음 ${t.due_date}` : base
+  }
+  if (st === 'monthly') {
+    const base = `매월 ${t.recurrence_day ?? 1}일`
+    return t.due_date ? `${base} · 다음 ${t.due_date}` : base
+  }
+  if (st === 'semiannual') {
+    const base = `반년주기 · ${extra.recurrence_month ?? '?'}월 ${t.recurrence_day ?? 1}일`
+    return t.due_date ? `${base} · 다음 ${t.due_date}` : base
+  }
+  if (st === 'annual') {
+    const base = `매년 ${extra.recurrence_month ?? '?'}월 ${t.recurrence_day ?? 1}일`
+    return t.due_date ? `${base} · 다음 ${t.due_date}` : base
+  }
   return st;
 }
 
@@ -83,6 +183,23 @@ function TodoFormFields({
   onCancel?: () => void;
   submitLabel: string;
 }) {
+  // 시작일 또는 주기 설정 변경 시 예정일 자동 계산
+  const autoCalc = () => {
+    if (!form.start_date && form.schedule_type === 'once') return
+    const calc = calculateNextDue(form)
+    onChange({ ...form, due_date: calc })
+  }
+
+  const handleRecurrenceChange = (updated: TodoForm) => {
+    // 시작일이 있으면 주기 변경 시 자동 재계산
+    if (updated.start_date) {
+      const calc = calculateNextDue(updated)
+      onChange({ ...updated, due_date: calc })
+    } else {
+      onChange(updated)
+    }
+  }
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
       <input className="input-field md:col-span-2" placeholder="할 일 제목 *" value={form.title} onChange={(e) => onChange({ ...form, title: e.target.value })} required />
@@ -90,7 +207,7 @@ function TodoFormFields({
 
       <div>
         <label className="text-xs text-slate-light block mb-1">유형</label>
-        <select className="input-field w-full" value={form.schedule_type} onChange={(e) => onChange({ ...form, schedule_type: e.target.value as ScheduleType })}>
+        <select className="input-field w-full" value={form.schedule_type} onChange={(e) => handleRecurrenceChange({ ...form, schedule_type: e.target.value as ScheduleType })}>
           <option value="once">일회성 (마감일)</option>
           <option value="daily">매일</option>
           <option value="weekly">매주</option>
@@ -109,17 +226,10 @@ function TodoFormFields({
         </select>
       </div>
 
-      {form.schedule_type === 'once' && (
-        <div>
-          <label className="text-xs text-slate-light block mb-1">마감일</label>
-          <input type="date" className="input-field w-full" value={form.due_date} onChange={(e) => onChange({ ...form, due_date: e.target.value })} />
-        </div>
-      )}
-
       {form.schedule_type === 'weekly' && (
         <div>
           <label className="text-xs text-slate-light block mb-1">요일</label>
-          <select className="input-field w-full" value={form.recurrence_weekday} onChange={(e) => onChange({ ...form, recurrence_weekday: Number(e.target.value) })}>
+          <select className="input-field w-full" value={form.recurrence_weekday} onChange={(e) => handleRecurrenceChange({ ...form, recurrence_weekday: Number(e.target.value) })}>
             {WEEKDAYS.map((d, i) => <option key={d} value={i}>{d}요일</option>)}
           </select>
         </div>
@@ -128,7 +238,8 @@ function TodoFormFields({
       {form.schedule_type === 'monthly' && (
         <div>
           <label className="text-xs text-slate-light block mb-1">매월 일자</label>
-          <input type="number" min={1} max={31} className="input-field w-full" value={form.recurrence_day} onChange={(e) => onChange({ ...form, recurrence_day: Number(e.target.value) })} />
+          <input type="number" min={1} max={31} className="input-field w-full" value={form.recurrence_day}
+            onChange={(e) => handleRecurrenceChange({ ...form, recurrence_day: Number(e.target.value) })} />
         </div>
       )}
 
@@ -136,21 +247,70 @@ function TodoFormFields({
         <div className="flex gap-2">
           <div className="flex-1">
             <label className="text-xs text-slate-light block mb-1">월</label>
-            <input type="number" min={1} max={12} className="input-field w-full" value={form.recurrence_month} onChange={(e) => onChange({ ...form, recurrence_month: Number(e.target.value) })} />
+            <input type="number" min={1} max={12} className="input-field w-full" value={form.recurrence_month}
+              onChange={(e) => handleRecurrenceChange({ ...form, recurrence_month: Number(e.target.value) })} />
           </div>
           <div className="flex-1">
             <label className="text-xs text-slate-light block mb-1">일</label>
-            <input type="number" min={1} max={31} className="input-field w-full" value={form.recurrence_day} onChange={(e) => onChange({ ...form, recurrence_day: Number(e.target.value) })} />
+            <input type="number" min={1} max={31} className="input-field w-full" value={form.recurrence_day}
+              onChange={(e) => handleRecurrenceChange({ ...form, recurrence_day: Number(e.target.value) })} />
           </div>
         </div>
       )}
 
-      {form.schedule_type !== 'once' && (
-        <div>
-          <label className="text-xs text-slate-light block mb-1">시작일 (선택)</label>
-          <input type="date" className="input-field w-full" value={form.start_date} onChange={(e) => onChange({ ...form, start_date: e.target.value })} />
-        </div>
-      )}
+      {/* 시작일 — once 포함 모든 유형 */}
+      <div>
+        <label className="text-xs text-slate-light block mb-1">
+          {form.schedule_type === 'once' ? '시작일' : '시작일 (선택)'}
+        </label>
+        <input
+          type="date"
+          className="input-field w-full"
+          value={form.start_date}
+          onChange={(e) => {
+            const updated = { ...form, start_date: e.target.value }
+            if (e.target.value) {
+              onChange({ ...updated, due_date: calculateNextDue(updated) })
+            } else {
+              onChange(updated)
+            }
+          }}
+        />
+      </div>
+
+      {/* 예정일 — 자동 계산되지만 직접 수정 가능 */}
+      <div>
+        <label className="text-xs text-slate-light block mb-1 flex items-center gap-1">
+          {form.schedule_type === 'once' ? '마감일' : '다음 예정일'}
+          {form.start_date && (
+            <button
+              type="button"
+              title="자동 계산"
+              onClick={autoCalc}
+              className="text-accent hover:text-accent-light ml-1"
+            >
+              <Wand2 className="w-3 h-3 inline" />
+            </button>
+          )}
+        </label>
+        <input
+          type="date"
+          className="input-field w-full"
+          value={form.due_date}
+          onChange={(e) => onChange({ ...form, due_date: e.target.value })}
+        />
+        {form.due_date && (() => {
+          const d = new Date(form.due_date + 'T00:00:00')
+          const original = form.start_date ? toDateStr(new Date(
+            form.schedule_type === 'once' ? form.start_date + 'T00:00:00'
+            : new Date(form.start_date + 'T00:00:00')
+          )) : null
+          const adjusted = original && original !== form.due_date
+          return adjusted ? (
+            <p className="text-[11px] text-yellow-400 mt-1">⚠ 주말/공휴일로 인해 날짜가 조정되었습니다.</p>
+          ) : null
+        })()}
+      </div>
 
       <div className="md:col-span-2 flex gap-2">
         <button type="button" className="btn-primary flex items-center gap-1" onClick={onSubmit}>
@@ -223,7 +383,7 @@ export default function TodosPage() {
 
   const filtered = items.filter((t) => {
     if (filter === 'today') return t.is_due_today;
-    if (filter === 'upcoming') return (t.schedule_type ?? 'once') === 'once' && !t.completed && t.due_date && t.due_date > today;
+    if (filter === 'upcoming') return !t.completed && t.due_date && t.due_date > today;
     if (filter === 'done') return t.completed || ((t.schedule_type ?? 'once') !== 'once' && t.last_completed_date === today);
     return true;
   });

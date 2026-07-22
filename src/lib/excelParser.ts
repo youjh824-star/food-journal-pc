@@ -507,6 +507,19 @@ function parseSheet(
     ? fillDateGaps(dataRows.map(r => parseDate(r[receiptDateColIdx] ?? null)))
     : null
 
+  // 시료명 빈 셀 → 바로 위 셀 이름으로 채우기 (fill-down only)
+  const sampleNameColIdx = mapping.sample_name ? headers.indexOf(mapping.sample_name) : -1
+  const filledSampleNames: (string | null)[] = sampleNameColIdx >= 0
+    ? (() => {
+        const raw2 = dataRows.map(r => {
+          const v = String(r[sampleNameColIdx] ?? '').trim()
+          return v || null
+        })
+        let last: string | null = null
+        return raw2.map(v => { if (v) { last = v; return v } return last })
+      })()
+    : []
+
   const samples: ParsedSample[] = []
   for (let i = headerRowIdx + 1; i < raw.length; i++) {
     const dataIdx = i - (headerRowIdx + 1)
@@ -520,7 +533,9 @@ function parseSheet(
     if (!sampleId) continue
 
     const sampleNameCol = mapping.sample_name
-    const sampleName = sampleNameCol ? String(row[sampleNameCol] ?? '').trim() : undefined
+    const sampleName = filledSampleNames.length > 0
+      ? (filledSampleNames[dataIdx] ?? undefined)
+      : (sampleNameCol ? String(row[sampleNameCol] ?? '').trim() || undefined : undefined)
 
     if (isStatRow(sampleName, sampleId)) continue
 

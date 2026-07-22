@@ -278,20 +278,40 @@ export async function sbUploadFile(file: File, equipmentId?: number): Promise<Up
     await supabase.from('work_logs').delete().eq('source_file', file.name)
   }
 
-  // 업무일지 생성
-  const { data: wl, error: wlErr } = await supabase.from('work_logs').insert([{
-    log_date: today(),
+  // 시험항목별로 샘플 그룹화
+  const byTestItem = new Map<string, ParsedSample[]>()
+  for (const s of samples) {
+    const key = s.test_item ?? '미분류'
+    if (!byTestItem.has(key)) byTestItem.set(key, [])
+    byTestItem.get(key)!.push(s)
+  }
+
+  // 대표 분析일 결정: 각 그룹에서 가장 많은 분析일
+  function primaryDate(group: ParsedSample[]): string {
+    const counts: Record<string, number> = {}
+    for (const s of group) {
+      if (s.analysis_date) counts[s.analysis_date] = (counts[s.analysis_date] ?? 0) + 1
+    }
+    const best = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]
+    return best ? best[0] : today()
+  }
+
+  // 시험항목별 업무일지 생성 (여러 시험항목이면 여러 행)
+  const wlRows = [...byTestItem.entries()].map(([ti, grp]) => ({
+    log_date: primaryDate(grp),
     project_name,
-    test_item,
-    sample_count: samples.length,
-    workload: samples.length,
+    test_item: ti === '미분류' ? (test_item || null) : ti,
+    sample_count: grp.length,
+    workload: grp.length,
     equipment_id: equipmentId ?? null,
     equipment_name: equipmentName ?? null,
     duration_hours: 8,
     status: 'completed',
     auto_generated: true,
     source_file: file.name,
-  }]).select().single()
+  }))
+
+  const { data: wlData, error: wlErr } = await supabase.from('work_logs').insert(wlRows).select()
   if (wlErr) throw new Error(wlErr.message)
 
   // 중복 샘플 체크 & 재시험 처리
@@ -305,10 +325,11 @@ export async function sbUploadFile(file: File, equipmentId?: number): Promise<Up
     if (error) throw new Error(error.message)
   }
 
+  const firstWl = (wlData ?? [])[0]
   return {
     filename: file.name,
     sample_count: processedSamples.length,
-    work_log_id: wl.id,
+    work_log_id: firstWl?.id ?? 0,
     anomalies: [],
     retest_comparisons: [],
     retest_count: 0,

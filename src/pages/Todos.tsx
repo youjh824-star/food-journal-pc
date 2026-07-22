@@ -74,35 +74,34 @@ function adjustToWorkday(d: Date): Date {
   return result
 }
 
-// 시작일 + 주기 설정으로 다음 예정일 계산
-function calculateNextDue(form: TodoForm): string {
+// 시작일 + 주기 설정으로 다음 예정일 계산 (조정 전 날짜와 조정 후 날짜 모두 반환)
+function calculateNextDue(form: TodoForm): { date: string; adjusted: boolean } {
   const base = form.start_date ? new Date(form.start_date + 'T00:00:00') : new Date()
 
   let target: Date
 
-  if (form.schedule_type === 'once') {
-    target = base
-  } else if (form.schedule_type === 'daily') {
+  if (form.schedule_type === 'once' || form.schedule_type === 'daily') {
     target = base
   } else if (form.schedule_type === 'weekly') {
     // recurrence_weekday: 0=월 ~ 6=일, JS getDay: 0=일 1=월 ... 6=토
     const jsDow = form.recurrence_weekday === 6 ? 0 : form.recurrence_weekday + 1
     target = new Date(base)
     const diff = (jsDow - target.getDay() + 7) % 7
-    target.setDate(target.getDate() + diff)
+    target.setDate(target.getDate() + (diff === 0 ? 0 : diff))
   } else if (form.schedule_type === 'monthly') {
     target = new Date(base.getFullYear(), base.getMonth(), form.recurrence_day)
     if (target < base) target.setMonth(target.getMonth() + 1)
   } else if (form.schedule_type === 'semiannual') {
     const m = form.recurrence_month - 1 // 0-indexed
     const d = form.recurrence_day
-    // 올해 지정 월, 6개월 후 중 base 이후 가장 가까운 날
-    const candidates = [
-      new Date(base.getFullYear(), m, d),
-      new Date(base.getFullYear(), m + 6, d),
-      new Date(base.getFullYear() + 1, m, d),
-    ]
-    target = candidates.filter(c => c >= base).sort((a, b) => a.getTime() - b.getTime())[0] ?? candidates[0]
+    // 지정 월/일 기준으로 6개월 간격 후보 생성 (최대 2년치)
+    const candidates: Date[] = []
+    for (let year = base.getFullYear() - 1; year <= base.getFullYear() + 2; year++) {
+      candidates.push(new Date(year, m, d))
+      candidates.push(new Date(year, m + 6, d)) // JS Date가 month > 11 이면 자동으로 다음 해로 처리
+    }
+    const future = candidates.filter(c => c >= base).sort((a, b) => a.getTime() - b.getTime())
+    target = future[0] ?? new Date(base.getFullYear(), m, d)
   } else { // annual
     const m = form.recurrence_month - 1
     const d = form.recurrence_day
@@ -110,7 +109,9 @@ function calculateNextDue(form: TodoForm): string {
     if (target < base) target.setFullYear(target.getFullYear() + 1)
   }
 
-  return toDateStr(adjustToWorkday(target))
+  const raw = toDateStr(target)
+  const worked = adjustToWorkday(target)
+  return { date: toDateStr(worked), adjusted: toDateStr(worked) !== raw }
 }
 
 const emptyForm = (): TodoForm => ({
@@ -186,15 +187,15 @@ function TodoFormFields({
   // 시작일 또는 주기 설정 변경 시 예정일 자동 계산
   const autoCalc = () => {
     if (!form.start_date && form.schedule_type === 'once') return
-    const calc = calculateNextDue(form)
-    onChange({ ...form, due_date: calc })
+    const { date } = calculateNextDue(form)
+    onChange({ ...form, due_date: date })
   }
 
   const handleRecurrenceChange = (updated: TodoForm) => {
     // 시작일이 있으면 주기 변경 시 자동 재계산
     if (updated.start_date) {
-      const calc = calculateNextDue(updated)
-      onChange({ ...updated, due_date: calc })
+      const { date } = calculateNextDue(updated)
+      onChange({ ...updated, due_date: date })
     } else {
       onChange(updated)
     }
@@ -270,7 +271,8 @@ function TodoFormFields({
           onChange={(e) => {
             const updated = { ...form, start_date: e.target.value }
             if (e.target.value) {
-              onChange({ ...updated, due_date: calculateNextDue(updated) })
+              const { date } = calculateNextDue(updated)
+              onChange({ ...updated, due_date: date })
             } else {
               onChange(updated)
             }
@@ -299,17 +301,9 @@ function TodoFormFields({
           value={form.due_date}
           onChange={(e) => onChange({ ...form, due_date: e.target.value })}
         />
-        {form.due_date && (() => {
-          const d = new Date(form.due_date + 'T00:00:00')
-          const original = form.start_date ? toDateStr(new Date(
-            form.schedule_type === 'once' ? form.start_date + 'T00:00:00'
-            : new Date(form.start_date + 'T00:00:00')
-          )) : null
-          const adjusted = original && original !== form.due_date
-          return adjusted ? (
-            <p className="text-[11px] text-yellow-400 mt-1">⚠ 주말/공휴일로 인해 날짜가 조정되었습니다.</p>
-          ) : null
-        })()}
+        {form.due_date && form.start_date && calculateNextDue(form).adjusted && (
+          <p className="text-[11px] text-yellow-400 mt-1">⚠ 주말/공휴일로 인해 이전 업무일로 조정되었습니다.</p>
+        )}
       </div>
 
       <div className="md:col-span-2 flex gap-2">
